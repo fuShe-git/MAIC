@@ -16,11 +16,11 @@ Milvus 向量数据库工具集。
     embed_text()          单条文本向量化，可把用户问题转成查询向量
     embed_texts()         批量文本向量化
 
-集合 rag_demo 的字段：
-    id      主键（INT64，自增）
-    text    原文（VARCHAR，中文分词）
-    dense   稠密向量（由外部 embedding 模型生成）
-    sparse  稀疏向量（BM25 函数在写入时自动生成）
+集合 threeKill 的字段：
+    id            主键（INT64，自增）
+    page_content  原文（VARCHAR，中文分词），与 LangChain Document.page_content 同名
+    dense         稠密向量（由外部 embedding 模型生成）
+    sparse        稀疏向量（BM25 函数在写入时自动生成）
 环境变量（server/.env）：
     MILVUS_URI       Milvus 地址，默认 http://127.0.0.1:19530
     MILVUS_TOKEN     Zilliz Cloud 等托管服务需要的令牌，本地部署可不填
@@ -48,7 +48,7 @@ from pymilvus import (
 # 显式指定 server/.env，否则以脚本方式运行时读不到配置
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-COLLECTION_NAME = "rag_demo"
+COLLECTION_NAME = "threeKill"
 # 稠密向量维度：必须与 embedding 模型的输出维度一致。百炼 text-embedding-v4 默认 1024 维
 DIM = 1024
 
@@ -153,7 +153,7 @@ def _build_schema(dim: int = DIM):
     schema = MilvusClient.create_schema(auto_id=True, enable_dynamic_field=True)
     schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
     schema.add_field(
-        field_name="text",
+        field_name="page_content",
         datatype=DataType.VARCHAR,
         max_length=65535,
         enable_analyzer=True,  # 必须开分词，BM25 依赖它
@@ -166,7 +166,7 @@ def _build_schema(dim: int = DIM):
         Function(
             name="bm25",
             function_type=FunctionType.BM25,
-            input_field_names=["text"],
+            input_field_names=["page_content"],
             output_field_names=["sparse"],
         )
     )
@@ -228,7 +228,7 @@ def insert_docs(
 
     Args:
         client: Milvus 客户端。
-        data: 记录列表，每条形如 {"text": 原文, "dense": 向量}；
+        data: 记录列表，每条形如 {"page_content": 原文, "dense": 向量}；
             sparse 由 BM25 函数自动生成，无需手写；dense 维度须等于建集合时的 dim。
         collection_name: 集合名，默认 rag_demo。
 
@@ -246,29 +246,30 @@ def insert_texts(
     batch_size: int = 10,
     collection_name: str = COLLECTION_NAME,
 ) -> int:
-    """只提供原文即可入库：内部先用 embedding 模型把 text 算成 dense 向量，再写入。
+    """只提供原文即可入库：内部先用 embedding 模型把 page_content 算成 dense 向量，再写入。
 
     Args:
         client: Milvus 客户端。
-        data: 记录列表，每条需含 "text" 字段；其他字段（如 metadata）原样保留。
+        data: 记录列表，每条需含 "page_content" 字段；其他字段（如 metadata 里的 source、
+            split_time）原样保留，由集合的 dynamic field 承接。
         batch_size: 向量化时单次请求的条数上限，百炼限制为 10。
         collection_name: 集合名，默认 rag_demo。
 
     Returns:
-        int: 实际写入条数；text 为空或纯空白的记录会被跳过，可能小于传入条数。
+        int: 实际写入条数；page_content 为空或纯空白的记录会被跳过，可能小于传入条数。
 
     Raises:
         ValueError: 模型输出的向量维度与集合的 dim 不一致。
     """
     docs = []
     for item in data or []:
-        text = (item.get("text") or "").strip()
-        if text:
-            docs.append({**item, "text": text})
+        content = (item.get("page_content") or "").strip()
+        if content:
+            docs.append({**item, "page_content": content})
     if not docs:
         return 0
 
-    vectors = embed_texts([doc["text"] for doc in docs], batch_size=batch_size)
+    vectors = embed_texts([doc["page_content"] for doc in docs], batch_size=batch_size)
 
     for doc, vector in zip(docs, vectors):
         if len(vector) != DIM:
@@ -290,7 +291,7 @@ def query_docs(
     ids: list[int] | None = None,
     filter_expr: str = "",
     limit: int | None = 10,
-    output_fields: tuple[str, ...] = ("id", "text"),
+    output_fields: tuple[str, ...] = ("id", "page_content"),
     collection_name: str = COLLECTION_NAME,
 ) -> list[dict]:
     """按主键或过滤条件查询数据。
@@ -298,7 +299,7 @@ def query_docs(
     Args:
         client: Milvus 客户端。
         ids: 主键列表；传了就按主键批量取（等价于 get by pk），此时忽略 filter_expr 与 limit。
-        filter_expr: 布尔过滤表达式，如 'id >= 0'、'text like "%向量%"'、'id in [1,2]'。
+        filter_expr: 布尔过滤表达式，如 'id >= 0'、'page_content like "%向量%"'、'id in [1,2]'。
         limit: 返回条数上限；output_fields 为聚合表达式（如 count(*)）时忽略。
         output_fields: 需要返回的字段；传 ("count(*)",) 时直接返回统计条数。
         collection_name: 集合名，默认 rag_demo。
@@ -359,7 +360,7 @@ def delete_docs(
 # ---------------------------------------------------------------------------
 
 def _format_hits(results) -> list[dict]:
-    """把 search 的嵌套返回压平：[[{id, distance, entity}, ...]] → [{id, score, text}]。"""
+    """把 search 的嵌套返回压平：[[{id, distance, entity}, ...]] → [{id, score, page_content}]。"""
     if not results:
         return []
     hits = []
@@ -369,7 +370,7 @@ def _format_hits(results) -> list[dict]:
             {
                 "id": hit.get("id"),
                 "score": hit.get("distance"),  # 余弦相似度 / BM25 / RRF 分数，越大越相关
-                "text": entity.get("text"),
+                "page_content": entity.get("page_content"),
             }
         )
     return hits
@@ -380,7 +381,7 @@ def search_dense(
     limit: int = 5,
     min_score: float | None = None,
     collection_name: str = COLLECTION_NAME,
-    output_fields: tuple[str, ...] = ("text",),
+    output_fields: tuple[str, ...] = ("page_content",),
 ) -> list[dict]:
     """稠密向量检索（语义相似），走 dense 索引。
 
@@ -391,10 +392,10 @@ def search_dense(
         min_score: 相似度下限（COSINE 取值 -1~1），只返回得分 >= 该值的结果，
             用来滤掉语义无关的「最近的 N 条」；不传则不做过滤。
         collection_name: 集合名，默认 rag_demo。
-        output_fields: 除 id、score 外需要返回的字段，默认只取 text。
+        output_fields: 除 id、score 外需要返回的字段，默认只取 page_content。
 
     Returns:
-        list[dict]: 形如 [{"id": ..., "score": ..., "text": ...}]，score 越大越相关。
+        list[dict]: 形如 [{"id": ..., "score": ..., "page_content": ...}]，score 越大越相关。
     """
     # params 里带 radius 就是 Milvus 的「范围检索」：小于 radius 的结果不进入候选集
     params: dict = {}
@@ -416,7 +417,7 @@ def search_keyword(
     query_text: str,
     limit: int = 5,
     collection_name: str = COLLECTION_NAME,
-    output_fields: tuple[str, ...] = ("text",),
+    output_fields: tuple[str, ...] = ("page_content",),
 ) -> list[dict]:
     """关键词检索（BM25 全文检索），走 sparse 索引。
 
@@ -428,10 +429,10 @@ def search_keyword(
         query_text: 查询原文，不需要自己算稀疏向量。
         limit: 返回条数上限。
         collection_name: 集合名，默认 rag_demo。
-        output_fields: 除 id、score 外需要返回的字段，默认只取 text。
+        output_fields: 除 id、score 外需要返回的字段，默认只取 page_content。
 
     Returns:
-        list[dict]: 形如 [{"id": ..., "score": ..., "text": ...}]，score 为 BM25 分数，越大越相关。
+        list[dict]: 形如 [{"id": ..., "score": ..., "page_content": ...}]，score 为 BM25 分数，越大越相关。
     """
     # 没命中任何查询词的文档分数为 0，本身就不会返回，因此这里不做相似度门槛
     results = client.search(
@@ -451,7 +452,7 @@ def hybrid_search(
     limit: int = 5,
     weights: tuple[float, float] | None = None,
     collection_name: str = COLLECTION_NAME,
-    output_fields: tuple[str, ...] = ("text",),
+    output_fields: tuple[str, ...] = ("page_content",),
 ) -> list[dict]:
     """混合检索：向量路与关键词路各取 limit 条候选，再由重排器融合出最终 TopN。
 
@@ -464,7 +465,7 @@ def hybrid_search(
             不传则使用 RRF（倒数排名融合），只看名次不看原始分数，
             可避免余弦分与 BM25 分量纲不一致。
         collection_name: 集合名，默认 rag_demo。
-        output_fields: 除 id、score 外需要返回的字段，默认只取 text。
+        output_fields: 除 id、score 外需要返回的字段，默认只取 page_content。
 
     Returns:
         list[dict]: 融合后的 TopN，score 为 RRF 名次倒数或加权分，
@@ -497,4 +498,20 @@ def hybrid_search(
 
 if __name__ == "__main__":
     milvus = get_client()
-    print(query_docs(milvus))
+
+    # 把查询问题转成稠密向量：维度由 DIM 决定（百炼 text-embedding-v4 默认 1024 维），
+    # 必须与建集合时的 dim 一致，否则检索会报维度不匹配
+    query_text = "2v2的玩法"
+    query_vector = embed_text(query_text)
+    print(f"查询文本：{query_text}")
+    print(f"向量维度：{len(query_vector)}")
+
+    # 三条检索路径都需要指定集合；当前数据写在 threeKill 里
+    print(search_dense(milvus, query_vector=query_vector, limit=3))
+    # print(search_keyword(milvus, query_text=query_text, limit=3))
+    # print(hybrid_search(
+    #         milvus,
+    #         query_vector=query_vector,
+    #         query_text=query_text,
+    #         limit=3
+    #     ))
