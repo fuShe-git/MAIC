@@ -23,10 +23,42 @@ class ChatRequest(BaseModel):
     )
 
 
+class CatalogItem(BaseModel):
+    """大纲里的一个模块，对应一次即将进行的讲解。"""
+
+    ind: int = Field(..., description="模块序号，从 1 开始")
+    title: list[str] = Field(default_factory=list, description="该模块内各知识点的标题")
+    context: list[str] = Field(
+        default_factory=list,
+        description=(
+            "与 title 一一对应的口播讲稿，可直接朗读（第 i 个 context 讲的就是第 i 个 title），"
+            "页面文字由讲稿提炼而来，二者不重复"
+        ),
+    )
+
+
+class PageItem(BaseModel):
+    """一个模块对应的页面，即「本部分大纲 + 渲染用 HTML」的组合。"""
+
+    ind: int = Field(..., description="模块序号，与 catalogList 中同序号模块的 ind 一致")
+    context: str = Field("", description="本部分的大纲文本，即标题 + 口播讲稿")
+    htmlpage: str = Field("", description="本部分对应的页面，HTML 代码")
+
+
 class ChatResponse(BaseModel):
     """返回给前端的结构。"""
 
     reply: str = Field(..., description="大模型回复的文本")
+    needLecture: bool = Field(False, description="是否需要讲解；False 时下面是空的")
+    topic: str = Field("", description="识别出的讲解主题")
+    catalogList: list[CatalogItem] = Field(
+        default_factory=list,
+        description="讲解大纲，已按由浅入深的顺序排好",
+    )
+    pageList: list[PageItem] = Field(
+        default_factory=list,
+        description="讲解页面，与 catalogList 按 ind 一一对应",
+    )
 
 
 @router.post("/chat", response_model=ChatResponse, summary="与大模型对话")
@@ -40,8 +72,36 @@ async def chat_with_model(payload: ChatRequest) -> ChatResponse:
 
     # 闲聊：图在 content_analysis 后就结束，reply 是「你好，我是 MAIC 助手…」这类回复
     if not state.get("needLecture"):
-        return ChatResponse(reply=state.get("reply") or "你好，我是 MAIC 助手，有什么可以帮你的？")
+        return ChatResponse(
+            reply=state.get("reply") or "你好，我是 MAIC 助手，有什么可以帮你的？",
+            needLecture=False,
+        )
 
-    # 需要讲解：后续节点（大纲 / 音频 / 页面）还没实现，先回显识别出的主题
+    # 需要讲解：主题 + 大纲由 text_organization 产出
     topic = state.get("topic") or payload.message
-    return ChatResponse(reply=f"已识别讲解主题：{topic}（大纲与课件生成开发中）")
+    catalog_list = [
+        CatalogItem(
+            ind=int(item.get("ind") or index),
+            title=list(item.get("title") or []),
+            context=list(item.get("context") or []),
+        )
+        for index, item in enumerate(state.get("catalogList") or [], start=1)
+    ]
+
+    # 页面由 text_organization 产出：每个模块一段大纲 + 一段 HTML
+    page_list = [
+        PageItem(
+            ind=int(page.get("ind") or index),
+            context=str(page.get("context") or ""),
+            htmlpage=str(page.get("htmlpage") or ""),
+        )
+        for index, page in enumerate(state.get("pageList") or [], start=1)
+    ]
+
+    return ChatResponse(
+        reply=f"已识别讲解主题：{topic}，共 {len(catalog_list)} 个模块",
+        needLecture=True,
+        topic=topic,
+        catalogList=catalog_list,
+        pageList=page_list,
+    )
