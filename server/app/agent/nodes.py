@@ -135,7 +135,9 @@ PAGE_PROMPT = """你是 MAIC 的课件前端，负责把一页口播讲稿提炼
    + 深灰正文（#4A4A4A，约 15px，行高 1.75），可用「·」分隔或圆点列表；
 4. 底部：橙色 #EC6520 通栏横幅，白色居中大字（约 20px，字间距 2px），写一句本页的总结口号；
 5. 只用 HTML + 内联 <style>，禁止 <script>、禁止外链字体与图片，禁止 markdown 代码块围栏；
-6. 页面文字是对讲稿的「提炼」，不是讲稿的搬运（讲稿是给人听的，页面是给人看的）：
+6. 整页内容必须在一屏内完整装下：不得出现纵向滚动条，不得有任何文字或模块被视口裁切，
+   文案多时优先精简文字，其次压缩字号与间距（字号不低于 13px、行高不低于 1.5）；
+7. 页面文字是对讲稿的「提炼」，不是讲稿的搬运（讲稿是给人听的，页面是给人看的）：
    - 每条信息条的小标题不超过 8 个字，正文写成 18~26 个字的一句话短语，可用「·」分隔两个关键词；
    - 必须自己改写和压缩，严禁整句照抄讲稿原话；
    - 不要出现「那么」「接下来」「我们说」「注意这里」「大家」这类口播连接词，页面不需要过渡句；
@@ -442,8 +444,51 @@ def _clean_html(raw: str) -> str:
     return text
 
 
+# 内容超过一屏时按比例整体缩放，消灭滚动条与裁切；容器尺寸变化时重算。
+# 只在溢出时触发（缩放比 >= 1 不注入 zoom），导出视频的 1280×720 截图不受影响。
+_FIT_SCRIPT = """
+<script>
+(function () {
+  function fit() {
+    var body = document.body, html = document.documentElement;
+    if (!body || !html || !html.clientHeight) return;
+    body.style.zoom = "";
+    var ratio = Math.min(
+      html.clientHeight / Math.max(html.scrollHeight, 1),
+      html.clientWidth / Math.max(html.scrollWidth, 1)
+    );
+    if (ratio < 0.999) body.style.zoom = String(ratio * 0.995);
+  }
+  window.addEventListener("load", fit);
+  window.addEventListener("resize", fit);
+  setTimeout(fit, 0);
+})();
+</script>
+"""
+
+
+def _inject_fit(html: str) -> str:
+    """把自适配脚本注入页面尾部；已经是完整文档才注入，兜底与模型页统一走这里。"""
+    lower = html.lower()
+    if "</body>" in lower:
+        at = lower.rfind("</body>")
+    elif "</html>" in lower:
+        at = lower.rfind("</html>")
+    else:
+        return html
+    return html[:at] + _FIT_SCRIPT + "\n" + html[at:]
+
+
 async def _build_page(topic: str, module: CatalogModule, total: int) -> str:
-    """根据一个模块的大纲（口播讲稿）生成对应 HTML 页面，失败时回退到兜底模板。"""
+    """根据一个模块的大纲（口播讲稿）生成对应 HTML 页面，失败时回退到兜底模板。
+
+    出口统一注入自适配脚本：任一路径（模型页 / 片段包装 / 兜底页）产出的
+    页面在窄容器里溢出时都会自动缩回一屏内，不再出现滚动条和内容裁切。"""
+    return _inject_fit(await _build_page_raw(topic, module, total))
+
+
+async def _build_page_raw(topic: str, module: CatalogModule, total: int) -> str:
+    """生成页面本体（不注入脚本），失败时回退到兜底模板。"""
     user_prompt = (
         f"整套课件主题：{topic}\n"
         f"本页序号：第 {module['ind']} 页，共 {total} 页\n"

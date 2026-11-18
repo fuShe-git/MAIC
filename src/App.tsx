@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { sendMessage } from './api/chat'
+import type { ChatResponse } from './api/chat'
+import LecturePlayer from './components/LecturePlayer'
 import './App.css'
 
 const EXAMPLES = [
@@ -36,6 +38,8 @@ function App() {
   const [reply, setReply] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // 接口返回了课件产物时切到播放器视图，否则留在主页展示 reply 文本
+  const [lecture, setLecture] = useState<ChatResponse | null>(null)
 
   async function handleSubmit() {
     const text = prompt.trim()
@@ -44,14 +48,40 @@ function App() {
     setLoading(true)
     setError('')
     setReply('')
+    setLecture(null)
 
     try {
-      setReply(await sendMessage(text))
+      const data = await sendMessage(text)
+      // 有讲解需求且拿得到任意一种课件产物（页面 / 课件 HTML / 视频）就切播放器
+      const hasProduct =
+        data.pageList.length > 0 || Boolean(data.courseHtml) || Boolean(data.videoUrl)
+      if (data.needLecture && hasProduct) {
+        setLecture(data)
+      } else {
+        setReply(data.reply)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '请求失败，请稍后重试')
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleBack() {
+    setLecture(null)
+  }
+
+  if (lecture) {
+    return (
+      <LecturePlayer
+        topic={lecture.topic}
+        pageList={lecture.pageList}
+        courseHtml={lecture.courseHtml}
+        videoUrl={lecture.videoUrl}
+        reply={lecture.reply}
+        onBack={handleBack}
+      />
+    )
   }
 
   return (

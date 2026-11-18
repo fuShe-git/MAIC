@@ -1,0 +1,385 @@
+/* ---------- 全屏播放器骨架：顶栏 / 内容区 / 底部按钮区 ---------- */
+
+.lp {
+  position: relative;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(
+      120% 60% at 50% -14%,
+      rgba(120, 96, 255, 0.2),
+      transparent 62%
+    ),
+    radial-gradient(
+      70% 35% at 50% -6%,
+      rgba(53, 214, 198, 0.06),
+      transparent 70%
+    ),
+    var(--bg);
+}
+
+/* ---------- 顶栏：返回 + 标题（右上角按需求留空） ---------- */
+
+.lp-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  background: linear-gradient(
+    180deg,
+    rgba(7, 7, 12, 0.94),
+    rgba(7, 7, 12, 0.55) 70%,
+    transparent
+  );
+  backdrop-filter: blur(8px);
+}
+
+.lp-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.lp-back:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.24);
+  transform: translateX(-2px);
+}
+
+.lp-back svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lp-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lp-kicker {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.lp-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 中间内容区 ---------- */
+
+.lp-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: min(1100px, 100%);
+  margin: 0 auto;
+  padding: 84px 24px 104px;
+}
+
+.lp-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #14141d;
+  box-shadow:
+    0 40px 90px -50px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.lp-iframe,
+.lp-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #14141d;
+}
+
+.lp-video {
+  object-fit: contain;
+  cursor: pointer;
+}
+
+/* 加载遮罩 */
+
+.lp-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+  background: rgba(20, 20, 29, 0.92);
+}
+
+.lp-spinner {
+  width: 26px;
+  height: 26px;
+  border: 2.5px solid rgba(139, 123, 255, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: lp-spin 0.8s linear infinite;
+}
+
+@keyframes lp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 产物全空 / 加载失败的兜底卡片 */
+
+.lp-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  background: #14141d;
+}
+
+.lp-empty-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.lp-empty.is-error .lp-empty-title {
+  color: #ff8f8f;
+}
+
+.lp-empty-text {
+  margin: 0;
+  max-width: 460px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.lp-retry {
+  margin-top: 8px;
+  height: 32px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(100deg, #6f5cff, #8b7bff);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: filter 0.18s ease;
+}
+
+.lp-retry:hover {
+  filter: brightness(1.12);
+}
+
+/* 降级提示 */
+
+.lp-fallback-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---------- 底部按钮区 ---------- */
+
+.lp-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 22px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(
+    0deg,
+    rgba(7, 7, 12, 0.96),
+    rgba(7, 7, 12, 0.72) 70%,
+    transparent
+  );
+  backdrop-filter: blur(8px);
+}
+
+.lp-ctrl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.lp-ctrl svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lp-ctrl:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.24);
+  transform: translateY(-1px);
+}
+
+.lp-ctrl:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.lp-ctrl:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.lp-ctrl.is-primary {
+  min-width: 96px;
+  border-color: transparent;
+  background: linear-gradient(100deg, #6f5cff, #8b7bff);
+  color: #fff;
+  box-shadow: 0 8px 24px -12px rgba(139, 123, 255, 0.9);
+}
+
+.lp-ctrl.is-primary:hover:not(:disabled) {
+  background: linear-gradient(100deg, #7d6bff, #9a8cff);
+  border-color: transparent;
+}
+
+.lp-page {
+  min-width: 64px;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.lp-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* 视频进度条 */
+
+.lp-seek {
+  width: min(320px, 40vw);
+  height: 4px;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  outline: none;
+  cursor: pointer;
+}
+
+.lp-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #07070c;
+  transition: transform 0.15s ease;
+}
+
+.lp-seek::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.lp-seek::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #07070c;
+}
+
+/* ---------- 小屏适配 ---------- */
+
+@media (max-width: 640px) {
+  .lp-top {
+    padding: 12px 14px;
+  }
+
+  .lp-title {
+    font-size: 15px;
+  }
+
+  .lp-stage {
+    padding: 76px 12px 118px;
+  }
+
+  .lp-frame {
+    border-radius: 12px;
+  }
+
+  .lp-bar {
+    gap: 8px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .lp-seek {
+    width: min(180px, 34vw);
+  }
+
+  .lp-hint {
+    display: none;
+  }
+}
