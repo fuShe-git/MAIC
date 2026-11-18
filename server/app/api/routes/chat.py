@@ -59,6 +59,14 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="讲解页面，与 catalogList 按 ind 一一对应",
     )
+    courseHtml: str = Field(
+        "",
+        description="组装后的自包含课件 HTML 落盘路径（节点4产出）；未生成时为空串",
+    )
+    videoUrl: str = Field(
+        "",
+        description="导出的 MP4 落盘路径（节点4产出）；未生成或导出失败时为空串",
+    )
 
 
 @router.post("/chat", response_model=ChatResponse, summary="与大模型对话")
@@ -104,4 +112,6 @@ async def chat_with_model(payload: ChatRequest) -> ChatResponse:
         topic=topic,
         catalogList=catalog_list,
         pageList=page_list,
+        courseHtml=str(state.get("courseHtml") or ""),
+        videoUrl=str(state.get("videoUrl") or ""),
     )

@@ -2,7 +2,7 @@
 
 拓扑：
 
-    START → content_analysis ─┬─ needLecture = True  → text_organization → audio → END
+    START → content_analysis ─┬─ needLecture = True  → text_organization → audio → html_audio_assemble → END
                               └─ needLecture = False → END（直接返回闲聊回复）
 
 - `add_edge`：普通边，A 执行完必去 B；
@@ -15,6 +15,7 @@ from app.agent.nodes import (
     SimpleState,
     audio_node,
     content_analysis_node,
+    html_audio_assemble,
     text_organization_node,
 )
 
@@ -36,6 +37,7 @@ def build_graph():
     graph.add_node("content_analysis", content_analysis_node)
     graph.add_node("text_organization", text_organization_node)
     graph.add_node("audio", audio_node)
+    graph.add_node("html_audio_assemble", html_audio_assemble)
 
     # 2. 连边
     graph.add_edge(START, "content_analysis")
@@ -48,7 +50,8 @@ def build_graph():
         },
     )
     graph.add_edge("text_organization", "audio")
-    graph.add_edge("audio", END)
+    graph.add_edge("audio", "html_audio_assemble")
+    graph.add_edge("html_audio_assemble", END)
 
     return graph.compile()
 

@@ -3,12 +3,22 @@ import json
 import logging
 import re
 from html import escape
+from pathlib import Path
 from typing import TypedDict
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.agent import get_llm
+from app.tools.audioCreate import tts_save
+from app.tools.courseAssemble import build_course_html
 from app.tools.milvus import embed_text, get_client, hybrid_search
+from app.tools.videoExport import (
+    estimate_duration,
+    export_mp4,
+    read_duration,
+    render_page_frames,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +41,10 @@ class AudioModule(TypedDict):
     ind 与 CatalogModule.ind 对应，用来把音频和它所属的页面配上对。
     """
 
-    ind: int      # 序号，与 catalogList 中对应模块的 ind 一致
-    context: str  # 台词
+    ind: int        # 序号，与 catalogList 中对应模块的 ind 一致
+    context: str    # 清洗后的口播台词（多个知识点讲稿按顺序拼接）
+    audio_path: str  # mp3 落盘绝对路径；空串表示该页没有旁白
+    duration: float  # 音频时长（秒），决定该页在视频里的停留时长
 
 
 class PageModule(TypedDict):
@@ -56,8 +68,13 @@ class SimpleState(TypedDict):
     catalogList:list[CatalogModule]  # 大纲，每个模块对应的页面
     audioList:list[AudioModule]      # 台词，每个模块对应的音频
     pageList:list[PageModule]        # 页面，每个模块对应的页面
+    courseHtml:str          # 组装后的自包含课件 HTML 落盘路径（节点4产出）
+    videoUrl:str            # 导出的 MP4 落盘路径（节点4产出；失败为空串）
 
 DEFAULT_GREETING = "你好，我是 MAIC 助手，可以为你讲解知识并生成配套音频与页面，想听点什么？"
+
+# 课件产物根目录：nodes.py 位于 server/app/agent/ 下，向上两级即 server/ 目录
+OUTPUT_DIR = Path(__file__).resolve().parents[2] / "outputs"
 
 CONTENT_ANALYSIS_PROMPT = """你是 MAIC（多智能体互动课堂）的内容分析助手，负责判断用户输入是否属于「需要讲解的内容」。
 
@@ -480,7 +497,93 @@ async def text_organization_node(state:SimpleState):
     print('节点二产出页面数', len(page_list))
     return {"catalogList": catalog, "pageList": page_list}
 
+# 节点3
+async def audio_node(state: SimpleState):
+    '''把每个模块的口播讲稿清洗后合成 TTS 音频，并读回时长。
 
-def audio_node(state:SimpleState):
-    '''根据大纲的每个模块生成台词，并将台词转换为音频'''
-    # 
+    台词直接复用节点2大纲里的 context（本就是可朗读的口播讲稿），不调模型二次生成；
+    各模块并发合成，单页失败只记日志、该页走时长估算兜底，不阻断整体。
+    '''
+    catalog: list[CatalogModule] = state.get("catalogList") or []
+    if not catalog:
+        return {"audioList": []}
+
+    audio_dir = OUTPUT_DIR / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    async def _synthesize(module: CatalogModule) -> AudioModule:
+        ind = module["ind"]
+        script = _clean_script("\n".join(module["context"]))
+        audio_path = ""
+        duration = estimate_duration(script)
+
+        if script:
+            target = audio_dir / f"{uuid4().hex}.mp3"
+            try:
+                await tts_save(script, target)
+                audio_path = str(target)
+                try:
+                    duration = read_duration(target)
+                except Exception as exc:
+                    logger.warning("第 %s 页音频时长读取失败，按字数估算：%s", ind, exc)
+            except Exception as exc:
+                logger.warning("第 %s 页 TTS 合成失败，该页将无旁白：%s", ind, exc)
+
+        return {
+            "ind": ind,
+            "context": script,
+            "audio_path": audio_path,
+            "duration": duration,
+        }
+
+    audio_list = await asyncio.gather(*(_synthesize(module) for module in catalog))
+    print("节点三产出音频数", len(audio_list))
+    return {"audioList": list(audio_list)}
+
+# 节点4
+async def html_audio_assemble(state: SimpleState):
+    '''整理页面 + 音频，组装成自包含课件 HTML 并导出 MP4。
+
+    组装与导出都只依赖前面节点的结构化产出，不调模型；
+    导出失败只记日志、videoUrl 置空，不阻断大纲/页面/讲稿这些已成功的产物。
+    '''
+    topic = (state.get("topic") or state.get("userIssue") or "课件").strip()
+    pages: list[PageModule] = state.get("pageList") or []
+    audios: list[AudioModule] = state.get("audioList") or []
+
+    if not pages:
+        logger.warning("没有页面，跳过组装与导出")
+        return {"courseHtml": "", "videoUrl": ""}
+
+    video_dir = OUTPUT_DIR / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    uid = uuid4().hex
+
+    # 1. 组装课件 HTML（每页 base64 音频 + 固定播放 JS），落盘可直接双击播放
+    course_html = build_course_html(topic, pages, audios)
+    course_path = video_dir / f"{uid}.html"
+    course_path.write_text(course_html, encoding="utf-8")
+
+    # 2. 截帧 + FFmpeg 合成 MP4；失败仅告警，不阻断主链路
+    audio_by_ind = {int(a.get("ind") or 0): a for a in audios}
+    audio_paths: list[str] = []
+    durations: list[float] = []
+    for page in pages:
+        audio = audio_by_ind.get(int(page.get("ind") or 0), {})
+        audio_paths.append(str(audio.get("audio_path") or ""))
+        duration = audio.get("duration")
+        if not duration:
+            duration = estimate_duration(str(page.get("context") or ""))
+        durations.append(float(duration))
+
+    video_path = ""
+    try:
+        frames = await render_page_frames([page["htmlpage"] for page in pages])
+        video_path = str(
+            await asyncio.to_thread(export_mp4, frames, audio_paths, durations, video_dir)
+        )
+    except Exception as exc:
+        logger.warning("视频导出失败，本次仅交付课件 HTML：%s", exc)
+
+    print("节点四产出课件", course_path.name, "视频", video_path or "无")
+    return {"courseHtml": str(course_path), "videoUrl": video_path}

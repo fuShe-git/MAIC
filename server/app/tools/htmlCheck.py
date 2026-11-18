@@ -231,7 +231,9 @@ async def _shot_with_playwright(
     height: int,
     full_page: bool,
 ) -> tuple[bytes, dict]:
-    """用 Playwright 渲染并截图，返回 (png 字节, 页面尺寸信息)。"""
+    """用 Playwright 渲染并截图，返回 (png 字节, 页面尺寸信息)。
+    安全地启动一个无头 Chromium，把 HTML 渲染到稳定状态（字体、布局都就绪），截一张 PNG，并顺带量出页面尺寸供溢出判断
+    """
     from playwright.async_api import async_playwright
 
     async with async_playwright() as pw:
