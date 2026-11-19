@@ -44,28 +44,8 @@ const INITIAL_WAIT: WaitState = {
   topic: '',
 }
 
-function ChevronDown() {
-  return (
-    <svg
-      className="icon icon-xs"
-      viewBox="0 0 16 16"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M4 6.5 8 10l4-3.5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
-
 function App() {
   const [prompt, setPrompt] = useState('')
-  const [deepMode, setDeepMode] = useState(true)
   // 视图三态：home 首页 → waiting 等待页 → player 课件页
   const [view, setView] = useState<'home' | 'waiting' | 'player'>('home')
   const [busy, setBusy] = useState(false)
@@ -231,26 +211,7 @@ function App() {
 
       <main className="composer">
         <div className="composer-head">
-          <div className="user">
-            <span className="avatar" aria-hidden="true" />
-            <span className="user-name">同学</span>
-            <ChevronDown />
-          </div>
-
           <span className="composer-tip">准备好一起学习了吗?</span>
-
-          <button className="model-switch" type="button">
-            <svg className="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" />
-              <path
-                d="M2 8h12M8 2c1.8 1.7 2.7 3.7 2.7 6S9.8 12.3 6.2 12.3 3.3 10 3.3 8 6.2 3.7 8 2Z"
-                stroke="currentColor"
-                strokeWidth="1.2"
-              />
-            </svg>
-            <span>API</span>
-            <ChevronDown />
-          </button>
         </div>
 
         <label className="sr-only" htmlFor="composer-input">
@@ -265,55 +226,23 @@ function App() {
         />
 
         <div className="composer-foot">
-          <button className="icon-btn" type="button" aria-label="添加附件">
+          <button
+            className="btn-enter"
+            type="button"
+            disabled={!prompt.trim() || busy}
+            onClick={handleSubmit}
+          >
             <svg className="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
-                d="M20 11.5 12.3 19a4.6 4.6 0 0 1-6.5-6.5l7.6-7.6a3 3 0 0 1 4.3 4.3l.6.6"
+                d="M12 19V5M6 11l6-6 6 6"
                 stroke="currentColor"
-                strokeWidth="1.6"
+                strokeWidth="1.8"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             </svg>
+            <span>{busy ? '生成中…' : '进入课堂'}</span>
           </button>
-
-          <div className="composer-actions">
-            <button
-              className={`btn-deep${deepMode ? ' is-active' : ''}`}
-              type="button"
-              onClick={() => setDeepMode((value) => !value)}
-            >
-              <svg className="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M12 3v3M12 18v3M4.2 7.5l2.6 1.5M17.2 15l2.6 1.5M4.2 16.5l2.6-1.5M17.2 9l2.6-1.5"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <circle cx="12" cy="12" r="3.2" stroke="currentColor" strokeWidth="1.6" />
-              </svg>
-              <span>深度交互</span>
-            </button>
-
-            <button
-              className="btn-enter"
-              type="button"
-              disabled={!prompt.trim() || busy}
-              onClick={handleSubmit}
-            >
-              <svg className="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M12 19V5M6 11l6-6 6 6"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              <span>{busy ? '生成中…' : '进入课堂'}</span>
-            </button>
-          </div>
         </div>
       </main>
     </div>
