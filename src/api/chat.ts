@@ -76,3 +76,83 @@ export async function sendMessage(
   const data = (await response.json()) as Partial<ChatResponse>
   return { ...EMPTY_RESPONSE, ...data }
 }
+
+/** 生成进度事件的步骤名，与后端 nodes.py 的 _emit step 对齐 */
+export type ProgressStep =
+  | 'check'
+  | 'topic'
+  | 'outline'
+  | 'pages'
+  | 'audio'
+  | 'assemble'
+  | 'reply'
+  | 'done'
+  | 'error'
+
+/** 后端 POST /api/chat/stream 推送的单条进度事件 */
+export interface ProgressEvent {
+  /** 步骤名 */
+  step: ProgressStep
+  /** 状态：start 开始 / progress 进行中（带 current、total）/ done 完成 / retrying 重试中 / failed 最终失败 */
+  status: string
+  /** 当前进度（页面/音频的 x） */
+  current?: number
+  /** 总数（页面/音频的 n）；0 表示拿不到总数，前端不展示 x/n */
+  total?: number
+  /** 展示给用户的文本（闲聊回复、错误原因等） */
+  message?: string
+  /** step=topic 时的讲解主题，用于展示「讲解主题：xxx」 */
+  topic?: string
+  /** step=done 时携带的完整课件数据 */
+  data?: ChatResponse
+}
+
+/**
+ * 调用后端流式接口，逐条回调进度事件（SSE：服务端通过长连接单向推送）。
+ * 需要 POST 带请求体，所以用 fetch + ReadableStream 手动解析，而非 EventSource。
+ * 网络错误、HTTP 非 200、流被截断都会抛错，由调用方展示失败态。
+ */
+export async function streamMessage(
+  message: string,
+  onEvent: (event: ProgressEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetch('/api/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+    signal,
+  })
+
+  if (!response.ok || !response.body) {
+    throw new Error(`请求失败（HTTP ${response.status}）`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+
+  // 按空行分帧，兼容一次网络包里带多帧、一帧被拆到两个包的情况
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary !== -1) {
+      const frame = buffer.slice(0, boundary).trim()
+      buffer = buffer.slice(boundary + 2)
+      if (frame.startsWith('data:')) {
+        const payload = frame.slice(5).trim()
+        if (payload) {
+          try {
+            onEvent(JSON.parse(payload) as ProgressEvent)
+          } catch {
+            // 单帧解析失败不影响后续帧，忽略继续
+          }
+        }
+      }
+      boundary = buffer.indexOf('\n\n')
+    }
+  }
+}
