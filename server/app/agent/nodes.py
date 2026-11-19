@@ -2,9 +2,10 @@ import asyncio
 import json
 import logging
 import re
+from contextvars import ContextVar
 from html import escape
 from pathlib import Path
-from typing import TypedDict
+from typing import Callable, Optional, TypedDict
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -76,6 +77,38 @@ DEFAULT_GREETING = "你好，我是 MAIC 助手，可以为你讲解知识并生
 # 课件产物根目录：nodes.py 位于 server/app/agent/ 下，向上两级即 server/ 目录
 OUTPUT_DIR = Path(__file__).resolve().parents[2] / "outputs"
 
+# ── 生成进度上报（供 SSE 流式接口 /api/chat/stream 使用）────────────────────
+# 用 ContextVar（上下文变量）保存回调：asyncio.gather 派出的并发子任务会继承
+# 同一上下文，因此逐页/逐音频的完成事件也能安全读到同一个回调。
+# 未设置时 _emit 为空操作——原 POST /chat 老接口不设回调，行为完全不变。
+ProgressEmitter = Callable[[dict], None]
+
+_PROGRESS_EMITTER: ContextVar[Optional[ProgressEmitter]] = ContextVar(
+    "progress_emitter", default=None
+)
+
+
+def set_progress_emitter(emitter: Optional[ProgressEmitter]) -> None:
+    """由流式接口在跑图前注册回调，跑完后传 None 复位。"""
+    _PROGRESS_EMITTER.set(emitter)
+
+
+def _emit(step: str, status: str, **fields) -> None:
+    """向当前注册的回调推送一条进度事件；回调异常绝不阻断生成主流程。
+
+    事件结构：{step, status, current, total, message, data}，
+    step 取值 check | outline | pages | audio | assemble | done | reply | error。
+    """
+    emitter = _PROGRESS_EMITTER.get()
+    if emitter is None:
+        return
+    event: dict = {"step": step, "status": status}
+    event.update({key: value for key, value in fields.items() if value is not None})
+    try:
+        emitter(event)
+    except Exception:  # 前端断开连接等异常直接吞掉，只留调试日志
+        logger.debug("进度事件推送失败：%s", event, exc_info=True)
+
 CONTENT_ANALYSIS_PROMPT = """你是 MAIC（多智能体互动课堂）的内容分析助手，负责判断用户输入是否属于「需要讲解的内容」。
 
 判断规则：
@@ -135,7 +168,9 @@ PAGE_PROMPT = """你是 MAIC 的课件前端，负责把一页口播讲稿提炼
    + 深灰正文（#4A4A4A，约 15px，行高 1.75），可用「·」分隔或圆点列表；
 4. 底部：橙色 #EC6520 通栏横幅，白色居中大字（约 20px，字间距 2px），写一句本页的总结口号；
 5. 只用 HTML + 内联 <style>，禁止 <script>、禁止外链字体与图片，禁止 markdown 代码块围栏；
-6. 页面文字是对讲稿的「提炼」，不是讲稿的搬运（讲稿是给人听的，页面是给人看的）：
+6. 整页内容必须在一屏内完整装下：不得出现纵向滚动条，不得有任何文字或模块被视口裁切，
+   文案多时优先精简文字，其次压缩字号与间距（字号不低于 13px、行高不低于 1.5）；
+7. 页面文字是对讲稿的「提炼」，不是讲稿的搬运（讲稿是给人听的，页面是给人看的）：
    - 每条信息条的小标题不超过 8 个字，正文写成 18~26 个字的一句话短语，可用「·」分隔两个关键词；
    - 必须自己改写和压缩，严禁整句照抄讲稿原话；
    - 不要出现「那么」「接下来」「我们说」「注意这里」「大家」这类口播连接词，页面不需要过渡句；
@@ -215,10 +250,12 @@ def _parse_json(raw: str) -> dict:
 async def content_analysis_node(state: SimpleState) -> dict:
     '''分析内容，判断是否为需要讲解'''
     print('来到这里',state)
+    _emit("check", "start", message="开始检查是否可以讲解")
     user_issue = (state.get("userIssue") or "").strip()
 
     # 空输入不必走模型，直接给引导语
     if not user_issue:
+        _emit("check", "done")
         return {"needLecture": False, "reply": DEFAULT_GREETING, "topic": ""}
 
     # 分类任务用温度 0，保证同样的输入得到同样的判定
@@ -231,16 +268,17 @@ async def content_analysis_node(state: SimpleState) -> dict:
         logger.warning("内容分析未返回布尔型 needLecture，按需要讲解处理：%s", raw)
         need_lecture = True
     print('节点一输出内容',need_lecture,data)
+    _emit("check", "done")
     if not need_lecture:
         reply = str(data.get("reply", "")).strip() or DEFAULT_GREETING
+        # 闲聊：图在此短路结束，reply 事件由流式接口按最终状态统一推送
         return {"needLecture": False, "reply": reply, "topic": ""}
 
-    
     # 需要讲解：产出规范化主题，交给 text_organization_node
-    return {
-        "needLecture": True,
-        "topic": str(data.get("topic", "")).strip() or user_issue,
-    }
+    topic = str(data.get("topic", "")).strip() or user_issue
+    # 插一步「讲解主题」：等待页展示「讲解主题：xxx」；闲聊分支不发，直接结束
+    _emit("topic", "start", topic=topic, message=f"讲解主题：{topic}")
+    return {"needLecture": True, "topic": topic}
 
 def _as_str_list(value) -> list[str]:
     """把模型输出统一成字符串列表：字符串按换行拆开，列表逐项转字符串，其余视为空。"""
@@ -442,8 +480,51 @@ def _clean_html(raw: str) -> str:
     return text
 
 
+# 内容超过一屏时按比例整体缩放，消灭滚动条与裁切；容器尺寸变化时重算。
+# 只在溢出时触发（缩放比 >= 1 不注入 zoom），导出视频的 1280×720 截图不受影响。
+_FIT_SCRIPT = """
+<script>
+(function () {
+  function fit() {
+    var body = document.body, html = document.documentElement;
+    if (!body || !html || !html.clientHeight) return;
+    body.style.zoom = "";
+    var ratio = Math.min(
+      html.clientHeight / Math.max(html.scrollHeight, 1),
+      html.clientWidth / Math.max(html.scrollWidth, 1)
+    );
+    if (ratio < 0.999) body.style.zoom = String(ratio * 0.995);
+  }
+  window.addEventListener("load", fit);
+  window.addEventListener("resize", fit);
+  setTimeout(fit, 0);
+})();
+</script>
+"""
+
+
+def _inject_fit(html: str) -> str:
+    """把自适配脚本注入页面尾部；已经是完整文档才注入，兜底与模型页统一走这里。"""
+    lower = html.lower()
+    if "</body>" in lower:
+        at = lower.rfind("</body>")
+    elif "</html>" in lower:
+        at = lower.rfind("</html>")
+    else:
+        return html
+    return html[:at] + _FIT_SCRIPT + "\n" + html[at:]
+
+
 async def _build_page(topic: str, module: CatalogModule, total: int) -> str:
-    """根据一个模块的大纲（口播讲稿）生成对应 HTML 页面，失败时回退到兜底模板。"""
+    """根据一个模块的大纲（口播讲稿）生成对应 HTML 页面，失败时回退到兜底模板。
+
+    出口统一注入自适配脚本：任一路径（模型页 / 片段包装 / 兜底页）产出的
+    页面在窄容器里溢出时都会自动缩回一屏内，不再出现滚动条和内容裁切。"""
+    return _inject_fit(await _build_page_raw(topic, module, total))
+
+
+async def _build_page_raw(topic: str, module: CatalogModule, total: int) -> str:
+    """生成页面本体（不注入脚本），失败时回退到兜底模板。"""
     user_prompt = (
         f"整套课件主题：{topic}\n"
         f"本页序号：第 {module['ind']} 页，共 {total} 页\n"
@@ -470,6 +551,7 @@ async def text_organization_node(state:SimpleState):
     '''根据主题查找资料，生成大纲,并生成对应页面（需要自体校验）'''
     topic = (state.get("topic") or state.get("userIssue") or "").strip()
     print('节点二输入主题', topic)
+    _emit("outline", "start", message="正在生成大纲…")
 
     # 兜底：没有主题就无从讲解，直接交回引导语
     if not topic:
@@ -483,10 +565,23 @@ async def text_organization_node(state:SimpleState):
 
     # 2. 带着检索结果回到模型：融合自身知识与 RAG 内容，按由浅入深产出大纲
     catalog = await _build_catalog(topic, docs)
+    total = len(catalog)
+    _emit("outline", "done", total=total)
+    _emit("pages", "start", total=total, message="正在生成页面…")
 
-    # 3. 每个模块生成一页 HTML：并发请求，gather 保证返回顺序与 catalog 一致
+    # 3. 每个模块生成一页 HTML：并发请求，gather 保证返回顺序与 catalog 一致；
+    #    包一层计数器，每完成一页就上报一次 x/n（计数只用于上报，不改变返回顺序）
+    pages_done = 0
+
+    async def _build_page_reported(module: CatalogModule) -> str:
+        nonlocal pages_done
+        page = await _build_page(topic, module, total)
+        pages_done += 1
+        _emit("pages", "progress", current=pages_done, total=total)
+        return page
+
     pages_html = await asyncio.gather(
-        *(_build_page(topic, module, len(catalog)) for module in catalog)
+        *(_build_page_reported(module) for module in catalog)
     )
 
     # 4. 汇总成 [{ind, context: 本部分大纲, htmlpage: 本部分对应的 HTML}]
@@ -508,6 +603,8 @@ async def audio_node(state: SimpleState):
     if not catalog:
         return {"audioList": []}
 
+    total = len(catalog)
+    _emit("audio", "start", total=total, message="正在合成音频…")
     audio_dir = OUTPUT_DIR / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -536,23 +633,36 @@ async def audio_node(state: SimpleState):
             "duration": duration,
         }
 
-    audio_list = await asyncio.gather(*(_synthesize(module) for module in catalog))
+    # 计数器包装：每合成完一页上报一次 x/n（计数只用于上报，不改变返回顺序）
+    audio_done = 0
+
+    async def _synthesize_reported(module: CatalogModule) -> AudioModule:
+        nonlocal audio_done
+        item = await _synthesize(module)
+        audio_done += 1
+        _emit("audio", "progress", current=audio_done, total=total)
+        return item
+
+    audio_list = await asyncio.gather(*(_synthesize_reported(module) for module in catalog))
     print("节点三产出音频数", len(audio_list))
     return {"audioList": list(audio_list)}
 
 # 节点4
 async def html_audio_assemble(state: SimpleState):
-    '''整理页面 + 音频，组装成自包含课件 HTML 并导出 MP4。
+    '''整理页面 + 音频，组装成自包含课件 HTML（暂不导出 MP4，见下方注释）。
 
-    组装与导出都只依赖前面节点的结构化产出，不调模型；
-    导出失败只记日志、videoUrl 置空，不阻断大纲/页面/讲稿这些已成功的产物。
+    组装只依赖前面节点的结构化产出，不调模型；
+    视频导出与课件 HTML 互不冲突（MP4 只依赖前面产物），先整体注释停用。
     '''
     topic = (state.get("topic") or state.get("userIssue") or "课件").strip()
     pages: list[PageModule] = state.get("pageList") or []
     audios: list[AudioModule] = state.get("audioList") or []
 
+    _emit("assemble", "start", total=len(pages), message="正在组装课件…")
+
     if not pages:
         logger.warning("没有页面，跳过组装与导出")
+        _emit("assemble", "done", message="没有可组装的页面")
         return {"courseHtml": "", "videoUrl": ""}
 
     video_dir = OUTPUT_DIR / "videos"
@@ -563,27 +673,31 @@ async def html_audio_assemble(state: SimpleState):
     course_html = build_course_html(topic, pages, audios)
     course_path = video_dir / f"{uid}.html"
     course_path.write_text(course_html, encoding="utf-8")
+    _emit("assemble", "done", message="课件组装完成")
 
-    # 2. 截帧 + FFmpeg 合成 MP4；失败仅告警，不阻断主链路
-    audio_by_ind = {int(a.get("ind") or 0): a for a in audios}
-    audio_paths: list[str] = []
-    durations: list[float] = []
-    for page in pages:
-        audio = audio_by_ind.get(int(page.get("ind") or 0), {})
-        audio_paths.append(str(audio.get("audio_path") or ""))
-        duration = audio.get("duration")
-        if not duration:
-            duration = estimate_duration(str(page.get("context") or ""))
-        durations.append(float(duration))
+    # 2. 截帧 + FFmpeg 合成 MP4；与课件 HTML 不冲突（MP4 只依赖前面产物）。
+    #    暂不导出视频（等待页只需课件 HTML 即可开始学习），需要时取消下方注释即可恢复。
+    # audio_by_ind = {int(a.get("ind") or 0): a for a in audios}
+    # audio_paths: list[str] = []
+    # durations: list[float] = []
+    # for page in pages:
+    #     audio = audio_by_ind.get(int(page.get("ind") or 0), {})
+    #     audio_paths.append(str(audio.get("audio_path") or ""))
+    #     duration = audio.get("duration")
+    #     if not duration:
+    #         duration = estimate_duration(str(page.get("context") or ""))
+    #     durations.append(float(duration))
+    #
+    # video_path = ""
+    # try:
+    #     frames = await render_page_frames([page["htmlpage"] for page in pages])
+    #     video_path = str(
+    #         await asyncio.to_thread(export_mp4, frames, audio_paths, durations, video_dir)
+    #     )
+    # except Exception as exc:
+    #     logger.warning("视频导出失败，本次仅交付课件 HTML：%s", exc)
 
-    video_path = ""
-    try:
-        frames = await render_page_frames([page["htmlpage"] for page in pages])
-        video_path = str(
-            await asyncio.to_thread(export_mp4, frames, audio_paths, durations, video_dir)
-        )
-    except Exception as exc:
-        logger.warning("视频导出失败，本次仅交付课件 HTML：%s", exc)
+    video_path = ""  # 暂不导出视频，恒为空串
 
     print("节点四产出课件", course_path.name, "视频", video_path or "无")
     return {"courseHtml": str(course_path), "videoUrl": video_path}

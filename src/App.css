@@ -72,56 +72,15 @@
 }
 
 .composer-head {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 12px;
-}
-
-.user {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: #efeefb;
-  font-size: 13px;
-}
-
-.avatar {
-  width: 20px;
-  height: 20px;
-  flex: none;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #8b7bff, #35d6c6);
-}
-
-.user-name {
-  white-space: nowrap;
+  justify-content: center;
 }
 
 .composer-tip {
   font-size: 12px;
   color: #8b8b9e;
   white-space: nowrap;
-}
-
-.model-switch {
-  justify-self: end;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 4px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #cfcbdd;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.18s ease;
-}
-
-.model-switch:hover {
-  background: rgba(255, 255, 255, 0.06);
 }
 
 .composer-input {
@@ -146,38 +105,10 @@
 .composer-foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding-top: 6px;
 }
 
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: #9a9aae;
-  cursor: pointer;
-  transition:
-    background 0.18s ease,
-    color 0.18s ease;
-}
-
-.icon-btn:hover {
-  background: rgba(255, 255, 255, 0.07);
-  color: #e7e5f2;
-}
-
-.composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.btn-deep,
 .btn-enter {
   display: inline-flex;
   align-items: center;
@@ -191,22 +122,6 @@
     background 0.18s ease,
     border-color 0.18s ease,
     color 0.18s ease;
-}
-
-.btn-deep {
-  border: 1px solid rgba(53, 214, 198, 0.5);
-  background: rgba(53, 214, 198, 0.08);
-  color: #eaf9f7;
-}
-
-.btn-deep:hover {
-  background: rgba(53, 214, 198, 0.14);
-}
-
-.btn-deep.is-active {
-  border-color: rgba(53, 214, 198, 0.85);
-  background: rgba(53, 214, 198, 0.18);
-  box-shadow: 0 0 0 3px rgba(53, 214, 198, 0.08);
 }
 
 .btn-enter {
@@ -280,11 +195,6 @@
   flex: none;
 }
 
-.icon-xs {
-  width: 11px;
-  height: 11px;
-}
-
 .sr-only {
   position: absolute;
   width: 1px;
@@ -320,12 +230,7 @@
     padding: 12px 13px 10px;
   }
 
-  .composer-head {
-    grid-template-columns: auto 1fr auto;
-  }
-
   .composer-tip {
-    justify-self: center;
     font-size: 11px;
   }
 
