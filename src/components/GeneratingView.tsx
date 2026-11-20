@@ -1,189 +1,299 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ChatResponse, ProgressStep } from '../api/chat'
 import './GeneratingView.css'
 
-/** 等待页所处阶段：进行中 / 重试中 / 最终失败 / 闲聊完成 / 课件就绪 */
-export type WaitStatus = 'running' | 'retrying' | 'failed' | 'reply' | 'ready'
+/** 等待页的四态 + 重试态 + 用户主动中断态 */
+export type WaitStatus = 'running' | 'ready' | 'reply' | 'failed' | 'retrying' | 'interrupted'
 
-export interface GeneratingViewProps {
-  /** 当前阶段 */
+interface GeneratingViewProps {
+  /** 当前整体状态 */
   status: WaitStatus
-  /** 当前推进到的步骤；null 表示还没收到任何进度 */
+  /** 当前所处步骤；null 表示尚未收到进度 */
   step: ProgressStep | null
-  /** 已完成页数 / 总页数（页面生成步骤） */
+  /** 页面生成：已完成 / 总数 */
   pagesCurrent: number
   pagesTotal: number
-  /** 已完成数 / 总数（音频合成步骤） */
+  /** 音频合成：已完成 / 总数 */
   audioCurrent: number
   audioTotal: number
-  /** 闲聊回复文本 或 错误信息 */
+  /** 闲聊回复文本或错误信息 */
   message: string
-  /** 讲解主题（step=topic 时展示「讲解主题：xxx」） */
+  /** 讲解主题 */
   topic: string
-  /** 课件数据（status=ready 时有值） */
+  /** 课件就绪后的产物（ready 态展示与降级提示用） */
   lecture: ChatResponse | null
-  /** 返回首页 */
   onBack: () => void
-  /** 重新生成（失败后） */
+  /** 中断生成（仅生成中可用） */
+  onInterrupt: () => void
   onRetry: () => void
-  /** 开始学习（课件就绪后） */
   onStart: () => void
+  /** 重试失败页（partial 降级交付时的入口） */
+  onRetryFailed?: () => void
 }
 
-/** 步骤清单定义，顺序即展示顺序 */
-const STEPS: { key: ProgressStep; name: string }[] = [
-  { key: 'check', name: '开始检查' },
-  { key: 'topic', name: '确认讲解主题' },
-  { key: 'outline', name: '生成大纲和页面' },
-  { key: 'pages', name: '页面生成中' },
-  { key: 'audio', name: '音频合成中' },
-  { key: 'assemble', name: '课件组装中' },
+/** 步骤清单（v4 新增 safety / quiz；confirm / retry 按需出现） */
+const STEP_DEFS: Array<{ key: ProgressStep; label: string }> = [
+  { key: 'check', label: '检查与理解' },
+  { key: 'safety', label: '内容安全审核' },
+  { key: 'topic', label: '确认主题' },
+  { key: 'outline', label: '生成大纲' },
+  { key: 'pages', label: '生成页面' },
+  { key: 'audio', label: '合成音频' },
+  { key: 'quiz', label: '课后练习' },
+  { key: 'assemble', label: '组装课件' },
+  { key: 'confirm', label: '等待确认大纲' },
+  { key: 'retry', label: '重试失败页' },
+  { key: 'done', label: '生成完毕' },
 ]
 
-const stepIndex = (step: ProgressStep | null): number =>
-  step ? STEPS.findIndex((item) => item.key === step) : -1
-
-/** 卡片大标题 / 副标题，随状态与步骤切换 */
-function useHeader(props: GeneratingViewProps): { title: string; subtitle: string } {
-  const { status, step, topic, pagesCurrent, pagesTotal, audioCurrent, audioTotal } = props
-  if (status === 'ready') return { title: '课程已生成', subtitle: '准备好了，开始学习吧' }
-  if (status === 'failed') return { title: '生成出错', subtitle: '可点击下方按钮重新生成' }
-  if (status === 'reply') return { title: '分析完成', subtitle: '看看 MAIC 怎么说' }
-  if (status === 'retrying') return { title: '正在重试', subtitle: '已自动重新开始生成' }
-
-  switch (step) {
-    case 'topic':
-      return { title: '确认讲解主题', subtitle: topic ? `讲解主题：${topic}` : '正在确定讲解主题…' }
-    case 'outline':
-      return { title: '生成课程大纲', subtitle: '正在构建学习路径…' }
-    case 'pages':
-      return {
-        title: '正在生成页面',
-        subtitle: pagesTotal > 0 ? `第 ${Math.min(pagesCurrent + 1, pagesTotal)} / ${pagesTotal} 页` : '请稍候…',
-      }
-    case 'audio':
-      return {
-        title: '正在合成音频',
-        subtitle: audioTotal > 0 ? `第 ${Math.min(audioCurrent + 1, audioTotal)} / ${audioTotal} 页` : '请稍候…',
-      }
-    case 'assemble':
-      return { title: '正在组装课件', subtitle: '马上就好…' }
-    default:
-      return { title: '开始检查', subtitle: '正在判断是否可以讲解…' }
-  }
+const RUNNING_TITLES: Record<string, string> = {
+  check: '正在理解你的讲解需求',
+  safety: '正在做内容安全审核',
+  topic: '正在确认讲解主题',
+  outline: '正在设计讲解大纲',
+  pages: '正在生成讲解页面',
+  audio: '正在合成讲解音频',
+  quiz: '正在生成课后练习',
+  assemble: '正在组装课件',
+  confirm: '等待你确认大纲',
+  retry: '正在重试失败的页面',
 }
 
 function CheckIcon() {
   return (
-    <svg className="gv-check" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path d="M3.5 8.5 6.5 11.5 12.5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className="gv-check" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M20 6 9 17l-5-5"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
 
-export default function GeneratingView(props: GeneratingViewProps) {
-  const { status, step, pagesCurrent, pagesTotal, audioCurrent, audioTotal, message, topic } = props
-  const header = useHeader(props)
-  const current = stepIndex(step)
-  const working = status === 'running' || status === 'retrying'
-
-  // 已等待时长（秒），仅进行中/重试中计时
+/**
+ * 生成等待页：深色科技感 + 玻璃卡片 + 步骤清单微动效。
+ * ready 态即结果页（标题「讲解完成」），partial 降级时展示失败清单与重试入口。
+ */
+export default function GeneratingView({
+  status,
+  step,
+  pagesCurrent,
+  pagesTotal,
+  audioCurrent,
+  audioTotal,
+  message,
+  topic,
+  lecture,
+  onBack,
+  onInterrupt,
+  onRetry,
+  onStart,
+  onRetryFailed,
+}: GeneratingViewProps) {
   const [elapsed, setElapsed] = useState(0)
-  useEffect(() => {
-    if (!working) return
-    const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000)
-    return () => window.clearInterval(timer)
-  }, [working])
-  const clock = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`
 
-  // 每个步骤右侧的计数/摘要文本；拿不到总数则留空，只显示步骤名
-  const countOf = (key: ProgressStep): string => {
-    if (key === 'topic' && topic) return `讲解主题：${topic}`
-    if (key === 'pages' && pagesTotal > 0) return `${pagesCurrent} / ${pagesTotal} 页`
-    if (key === 'audio' && audioTotal > 0) return `${audioCurrent} / ${audioTotal} 页`
-    return ''
-  }
+  useEffect(() => {
+    const timer = window.setInterval(() => setElapsed((prev) => prev + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  // 生成中或重试中才走步骤清单；其余态按结果页展示
+  const running = status === 'running' || status === 'retrying'
+  const ready = status === 'ready'
+  const failed = status === 'failed'
+  const replied = status === 'reply'
+  const interrupted = status === 'interrupted'
+
+  const activeStep: ProgressStep | null = status === 'retrying' ? 'retry' : step
+
+  // 步骤可见性：confirm / retry 只在出现时占位，其余常驻
+  const visibleSteps = useMemo(
+    () =>
+      STEP_DEFS.filter((def) => {
+        if (def.key === 'confirm' || def.key === 'retry') {
+          return activeStep === def.key || (def.key === 'retry' && status === 'retrying')
+        }
+        return true
+      }),
+    [activeStep, status],
+  )
+
+  const activeIndex = visibleSteps.findIndex((def) => def.key === activeStep)
+
+  const failedPages = lecture?.failedPages ?? []
+  const partial = Boolean(lecture?.partial) || failedPages.length > 0
+
+  const title = ready
+    ? '讲解完成'
+    : failed
+      ? '生成失败'
+      : interrupted
+        ? '生成已中断'
+        : replied
+          ? 'MAIC 助手'
+          : status === 'retrying'
+            ? '正在重试生成'
+            : '正在生成讲解'
+
+  const subtitle = ready
+    ? partial
+      ? '讲解已就绪，但有部分内容降级交付'
+      : '讲解已就绪，可以开始学习了'
+    : failed
+      ? '很抱歉，生成过程中出了点问题'
+      : interrupted
+        ? '本次生成已停止，可重新生成或返回首页'
+        : replied
+          ? '这次没有生成课件，先聊聊吧'
+          : (activeStep && RUNNING_TITLES[activeStep]) || '正在为你生成讲解'
 
   return (
     <div className="gv-page">
-      <button className="gv-back" type="button" onClick={props.onBack}>
-        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M10 3.5 5.5 8 10 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <button className="gv-back" type="button" onClick={onBack}>
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M15 18l-6-6 6-6"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
-        返回首页
+        返回
       </button>
 
-      <div className="gv-orb gv-orb-blue" aria-hidden="true" />
-      <div className="gv-orb gv-orb-purple" aria-hidden="true" />
+      <div className="gv-orb gv-orb-blue" />
+      <div className="gv-orb gv-orb-purple" />
 
-      <main className="gv-card" key={status === 'ready' ? 'ready' : 'card'}>
-        <div className="gv-dots" aria-hidden="true">
-          <span className={`gv-dot${working ? ' is-active' : ''}`} />
-          <span className={`gv-dot${status === 'reply' || status === 'ready' ? ' is-done' : working ? 'is-pulse' : ''}`} />
-          <span className={`gv-dot${status === 'ready' ? ' is-done' : ''}`} />
+      <div className={`gv-card ${ready ? 'is-ready' : ''}`}>
+        <div className="gv-dots">
+          <div className={`gv-dot ${ready || activeIndex > 2 ? 'is-done' : running && activeIndex <= 2 ? 'is-active is-pulse' : ''}`} />
+          <div className={`gv-dot ${ready ? 'is-done' : running && activeIndex > 2 ? 'is-active is-pulse' : ''}`} />
+          <div className={`gv-dot ${ready ? 'is-done' : ''}`} />
         </div>
 
-        <div className={`gv-badge${status === 'ready' ? ' is-ready' : status === 'failed' ? ' is-failed' : ''}`} aria-hidden="true">
-          {status === 'ready' ? <CheckIcon /> : <span className="gv-badge-core" />}
+        <div className={`gv-badge ${ready ? 'is-ready' : failed || interrupted ? 'is-failed' : ''}`}>
+          {ready || failed || interrupted ? <CheckIcon /> : <div className="gv-badge-core" />}
         </div>
 
-        <h1 className="gv-title">{header.title}</h1>
-        <p className="gv-subtitle">{header.subtitle}</p>
+        <h1 className="gv-title">{title}</h1>
+        <p className="gv-subtitle">{subtitle}</p>
 
-        {/* 步骤清单：进行中/重试中/失败时展示 */}
-        {(status === 'running' || status === 'retrying' || status === 'failed') && (
-          <ol className="gv-steps">
-            {STEPS.map((item, index) => {
-              const state = index < current ? 'done' : index === current ? 'active' : 'pending'
+        {running ? (
+          <ul className="gv-steps">
+            {visibleSteps.map((def, idx) => {
+              const done = activeIndex >= 0 && idx < activeIndex
+              const active = idx === activeIndex
+              let count = ''
+              if (def.key === 'pages' && pagesTotal > 0) count = `${pagesCurrent} / ${pagesTotal}`
+              else if (def.key === 'audio' && audioTotal > 0) count = `${audioCurrent} / ${audioTotal}`
+              else if (def.key === 'topic' && topic) count = topic
               return (
-                <li className={`gv-step is-${state}`} key={item.key}>
-                  <span className="gv-step-mark">{state === 'done' ? <CheckIcon /> : <i />}</span>
-                  <span className="gv-step-name">{item.name}</span>
-                  <span className="gv-step-count">{countOf(item.key)}</span>
+                <li key={def.key} className={`gv-step ${done ? 'is-done' : ''} ${active ? 'is-active' : ''}`}>
+                  <span className="gv-step-mark">{done ? <CheckIcon /> : <i />}</span>
+                  <span className="gv-step-name">{def.label}</span>
+                  {count ? (
+                    <span className="gv-step-count" title={count}>
+                      {count}
+                    </span>
+                  ) : null}
                 </li>
               )
             })}
-          </ol>
-        )}
+          </ul>
+        ) : null}
 
-        {/* 闲聊完成：卡片内直接展示回复文本 */}
-        {status === 'reply' && <p className="gv-reply">{message}</p>}
+        {replied && message ? <div className="gv-reply">{message}</div> : null}
 
-        {/* 重试中：错误原因 + 重试提示（进度已由后端重新开始） */}
-        {status === 'retrying' && <p className="gv-banner is-warn">{message}</p>}
+        {status === 'retrying' ? (
+          <div className="gv-banner is-warn">{message || '正在重新生成，请稍候…'}</div>
+        ) : null}
 
-        {/* 最终失败：错误信息 + 重新生成，不展示开始学习 */}
-        {status === 'failed' && (
+        {failed ? <div className="gv-banner is-error">{message || '生成出错，请重试'}</div> : null}
+
+        {interrupted ? <div className="gv-banner is-warn">{message || '你已中断本次生成'}</div> : null}
+
+        {ready && partial ? (
+          <div className="gv-banner is-warn">
+            以下内容生成失败，已降级交付：
+            {failedPages.map((row) => (
+              <div key={`${row.ind}-${row.stage}`} className="gv-failed-item">
+                第 {row.ind} 页 · {row.stage === 'audio' ? '音频合成失败' : '页面生成失败'}
+                {row.error ? `（${row.error}）` : ''}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {running ? (
+          <button className="gv-btn is-danger" type="button" onClick={onInterrupt}>
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+            中断生成
+          </button>
+        ) : null}
+
+        {ready ? (
           <>
-            <p className="gv-banner is-error">{message}</p>
-            <button className="gv-btn is-ghost" type="button" onClick={props.onRetry}>
+            <button className="gv-btn is-primary" type="button" onClick={onStart}>
+              开始学习
+            </button>
+            {partial && onRetryFailed ? (
+              <button className="gv-btn is-ghost" type="button" onClick={onRetryFailed}>
+                重试失败页
+              </button>
+            ) : null}
+          </>
+        ) : null}
+
+        {interrupted ? (
+          <>
+            <button className="gv-btn is-primary" type="button" onClick={onRetry}>
               重新生成
             </button>
+            <button className="gv-btn is-ghost" type="button" onClick={onBack}>
+              返回首页
+            </button>
           </>
-        )}
+        ) : null}
 
-        {/* 课件就绪：出现开始学习按钮 */}
-        {status === 'ready' && (
-          <button className="gv-btn is-primary" type="button" onClick={props.onStart}>
-            开始学习
-            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M6 3.5 10.5 8 6 12.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+        {failed ? (
+          <>
+            <button className="gv-btn is-primary" type="button" onClick={onRetry}>
+              重新生成
+            </button>
+            <button className="gv-btn is-ghost" type="button" onClick={onBack}>
+              返回首页
+            </button>
+          </>
+        ) : null}
+
+        {replied ? (
+          <button className="gv-btn is-ghost" type="button" onClick={onBack}>
+            返回首页
           </button>
-        )}
+        ) : null}
 
-        {props.lecture && status === 'ready' && (
-          <p className="gv-meta">共 {props.lecture.pageList.length} 个模块 · {props.lecture.topic}</p>
-        )}
-      </main>
+        {ready ? (
+          <div className="gv-meta">
+            {topic ? `主题：${topic}　` : ''}
+            {lecture?.pageList?.length ? `${lecture.pageList.length} 页　` : ''}
+            {partial ? '部分成功' : '全部成功'}
+          </div>
+        ) : null}
+      </div>
 
-      {working && (
-        <footer className="gv-foot">
-          <span className="gv-spinner" aria-hidden="true" />
-          <span>AI智能体工作中…</span>
-          <span className="gv-clock">{clock}</span>
-        </footer>
-      )}
+      {running ? (
+        <div className="gv-foot">
+          <div className="gv-spinner" />
+          <span>{status === 'retrying' ? '正在重试，预计还需 1 分钟' : '正在为你生成讲解，预计 1-2 分钟'}</span>
+          <span className="gv-clock">已用时 {elapsed}s</span>
+        </div>
+      ) : null}
     </div>
   )
 }

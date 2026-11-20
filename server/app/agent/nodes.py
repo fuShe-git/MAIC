@@ -1,3 +1,13 @@
+"""公共层：Prompt（提示词）、辅助函数、产物目录、进度上报。
+
+v4 拆分后本模块不再包含图节点：
+- 节点逻辑迁往 agents/ 下的子 agent（intent / query_rewrite / research / outline /
+  page / audio / fact_check / quiz / safety / assemble）；
+- 本模块保留全部 Prompt 与生成辅助函数，供各子 agent 原样复用；
+- re-export state 类型（SimpleState / CatalogModule / AudioModule / PageModule），
+  保持既有 `from app.agent.nodes import ...` 导入零破坏。
+"""
+
 import asyncio
 import json
 import logging
@@ -5,72 +15,49 @@ import re
 from contextvars import ContextVar
 from html import escape
 from pathlib import Path
-from typing import Callable, Optional, TypedDict
-from uuid import uuid4
+from typing import Callable, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.agent import get_llm
-from app.tools.audioCreate import tts_save
-from app.tools.courseAssemble import build_course_html
-from app.tools.milvus import embed_text, get_client, hybrid_search
-from app.tools.videoExport import (
-    estimate_duration,
-    export_mp4,
-    read_duration,
-    render_page_frames,
+from app.agent.state import (
+    AudioModule,
+    CatalogModule,
+    PageModule,
+    SimpleState,
 )
+from app.tools.milvus import embed_text, get_client, hybrid_search
+
+# ── langchain 版本兼容垫片 ─────────────────────────────────────────────────
+# langchain-core 0.3.x 的 globals.py 会读取根包 langchain 的 debug / verbose /
+# llm_cache 透传属性（0.3 时代保留的废弃兼容层）；langchain 1.x 已删除该透传，
+# 二者在同一环境共存时读取即抛 "module 'langchain' has no attribute 'debug'"。
+# 本项目不直接依赖根包 langchain，这里启动时按需补齐默认属性，任意版本组合均可运行。
+try:
+    import langchain as _langchain_root
+
+    for _attr, _default in (("debug", False), ("verbose", False), ("llm_cache", None)):
+        if not hasattr(_langchain_root, _attr):
+            setattr(_langchain_root, _attr, _default)
+except ImportError:
+    # 未安装根包时 langchain-core 会自动跳过该分支，无需处理
+    pass
 
 logger = logging.getLogger(__name__)
 
-class CatalogModule(TypedDict):
-    """大纲里的一个模块，对应一个即将讲解的页面。
+__all__ = [
+    "SimpleState",
+    "CatalogModule",
+    "AudioModule",
+    "PageModule",
+    "DEFAULT_GREETING",
+    "OUTPUT_DIR",
+    "set_progress_emitter",
+    "_emit",
+]
 
-    title 与 context 一一对应（第 i 个 title 的讲稿就是第 i 个 context），
-    因此二者长度必须相等。context 是能直接朗读的口播讲稿，不是页面文案；
-    页面文字由它二次提炼而来。
-    """
-
-    ind: int            # 序号
-    title: list[str]    # 该页面内各知识点的标题
-    context: list[str]  # 与 title 一一对应的口播讲稿（90~160 字，口语连贯）
-
-
-class AudioModule(TypedDict):
-    """一个模块对应的音频数据。
-
-    ind 与 CatalogModule.ind 对应，用来把音频和它所属的页面配上对。
-    """
-
-    ind: int        # 序号，与 catalogList 中对应模块的 ind 一致
-    context: str    # 清洗后的口播台词（多个知识点讲稿按顺序拼接）
-    audio_path: str  # mp3 落盘绝对路径；空串表示该页没有旁白
-    duration: float  # 音频时长（秒），决定该页在视频里的停留时长
-
-
-class PageModule(TypedDict):
-    """一个模块对应的页面数据，即「大纲 + 页面」的组合。
-
-    ind 与 catalogList / audioList 中同序号的模块对应，
-    context 为该模块的大纲文本，htmlpage 为渲染用 HTML。
-    """
-
-    ind: int       # 序号，与前面对应
-    context: str   # 本部分大纲，即标题 + 口播讲稿
-    htmlpage: str  # 本部分对应的页面，HTML 代码
-
-
-# state
-class SimpleState(TypedDict):
-    userIssue:str           # 用户问题
-    needLecture:bool        # 是否需要讲解；False 时图直接结束
-    reply:str               # 不需要讲解时返回给用户的简单回复
-    topic:str               # 从用户问题里归纳出的讲解主题，供后续节点使用
-    catalogList:list[CatalogModule]  # 大纲，每个模块对应的页面
-    audioList:list[AudioModule]      # 台词，每个模块对应的音频
-    pageList:list[PageModule]        # 页面，每个模块对应的页面
-    courseHtml:str          # 组装后的自包含课件 HTML 落盘路径（节点4产出）
-    videoUrl:str            # 导出的 MP4 落盘路径（节点4产出；失败为空串）
+# 模块类型与图状态（SimpleState / CatalogModule / AudioModule / PageModule）
+# 已迁往 state.py，并在上方 re-export，兼容既有 `from app.agent.nodes import ...`。
 
 DEFAULT_GREETING = "你好，我是 MAIC 助手，可以为你讲解知识并生成配套音频与页面，想听点什么？"
 
@@ -109,20 +96,27 @@ def _emit(step: str, status: str, **fields) -> None:
     except Exception:  # 前端断开连接等异常直接吞掉，只留调试日志
         logger.debug("进度事件推送失败：%s", event, exc_info=True)
 
-CONTENT_ANALYSIS_PROMPT = """你是 MAIC（多智能体互动课堂）的内容分析助手，负责判断用户输入是否属于「需要讲解的内容」。
+CONTENT_ANALYSIS_PROMPT = """你是 MAIC（多智能体互动课堂）的内容分析助手，负责判断用户输入是否属于「需要讲解的内容」，并识别用户意图。
 
 判断规则：
 1. 打招呼、闲聊、询问软件功能、无意义字符 → 不需要讲解；
 2. 提出一个可讲授的主题，例如「三国杀的玩法」「讲一下三国杀的玩法」「三国杀」「牛顿第二定律是什么」→ 需要讲解；
 3. 需要讲解时，把用户的话归纳成一个简短、名词性的主题，去掉「讲一下」「介绍一下」这类动词，例如「三国杀的玩法」。
 
+意图识别规则（intent 字段，多轮增量）：
+1. 提出全新主题，或对话历史里没有已生成的课件 → "new_lecture"；
+2. 要求把已生成的课件继续讲下去、补充后续内容（例如「继续」「接着讲」）→ "continue"；
+3. 要求修改已生成课件的某一页/某一部分（例如「把第二页改一下」），reviseInds 填要改的页序号数组 → "revise_page"；
+4. 只想要课后练习/测验（例如「给我出几道题」「来个测验」）→ "quiz_only"；
+5. 其他不需要生成课件的对话（闲聊、追问、提问）→ "chat"。
+
 输出要求：只输出 JSON，不要输出解释文字或代码块围栏。
 
 需要讲解时：
-{"needLecture": true, "topic": "三国杀的玩法", "reply": ""}
+{"needLecture": true, "topic": "三国杀的玩法", "reply": "", "intent": "new_lecture", "reviseInds": []}
 
 不需要讲解时（topic 留空，reply 填一句简短的自我介绍式回复）：
-{"needLecture": false, "topic": "", "reply": "你好，我是 MAIC 助手，可以为你讲解知识并生成配套音频与页面，想听点什么？"}"""
+{"needLecture": false, "topic": "", "reply": "你好，我是 MAIC 助手，可以为你讲解知识并生成配套音频与页面，想听点什么？", "intent": "chat", "reviseInds": []}"""
 
 TOPIC_ROUTING_PROMPT = """你是 MAIC 的主题分类助手，负责判断一个讲解主题是否属于桌面卡牌游戏「三国杀」。
 
@@ -134,6 +128,47 @@ TOPIC_ROUTING_PROMPT = """你是 MAIC 的主题分类助手，负责判断一个
 输出要求：只输出 JSON，不要解释文字，不要代码块围栏。
 属于：{"isSanguosha": true}
 不属于：{"isSanguosha": false}"""
+
+QUERY_REWRITE_PROMPT = """你是 MAIC 的检索查询改写助手，负责把一个讲解主题改写成 3~5 个不同角度的检索查询，用来从知识库里召回更全面的资料。
+
+要求：
+1. 角度包括但不限于：定义与概念、规则与流程、分类与举例、技巧与策略、常见误区；
+2. 每个查询是一句简短的检索词（10~20 字），彼此不重复；
+3. 只围绕主题本身，不要引入无关话题。
+
+输出要求：只输出 JSON，不要解释文字，不要代码块围栏。
+示例：{"queries": ["三国杀是什么游戏", "三国杀身份场规则流程", "三国杀武将技能怎么用"]}"""
+
+FACT_CHECK_PROMPT = """你是 MAIC 的事实核查助手，负责对照参考资料核查课件大纲里是否有与资料矛盾的事实性错误。
+
+要求：
+1. 只核查事实（规则、数字、名称、流程、机制），不评判表述风格与详略；
+2. 资料是权威依据；大纲与资料矛盾时判定为冲突，资料没提到的内容不算冲突；
+3. 每条冲突给出模块 ind 与一句简短原因（20 字以内）。
+
+输出要求：只输出 JSON，不要解释文字，不要代码块围栏。
+有冲突：{"conflicts": [{"ind": 2, "reason": "摸牌数量与资料不符"}]}
+无冲突：{"conflicts": []}"""
+
+QUIZ_PROMPT = """你是 MAIC 的出题助手，负责根据课件大纲生成课后练习题。
+
+要求：
+1. 出 3~5 道题，覆盖大纲各模块的核心知识点，由浅入深；题型混合单选与多选（多选约占三分之一）；
+2. 每题 4 个选项（options）；answer 是正确答案下标数组（下标从 0 开始）：单选题 1 个下标，多选题 2 个及以上下标；
+3. analysis 是一句答案解析（30 字以内）；
+4. 题目语言口语化、无歧义，不要出超纲题。
+
+输出要求：只输出 JSON，不要解释文字，不要代码块围栏。
+示例：{"quizList": [{"question": "三国杀中主公的胜利条件是什么？", "options": ["清掉反贼", "清掉反贼和内奸", "击杀主公", "活到最后"], "answer": [1], "analysis": "主公与忠臣需清掉反贼和内奸才能获胜。"}, {"question": "以下哪些属于主公的胜利条件？", "options": ["反贼全部阵亡", "内奸独活", "主公存活", "忠臣全部阵亡"], "answer": [0, 2], "analysis": "反贼全灭且主公存活即获胜。"}]}"""
+
+SAFETY_PROMPT = """你是 MAIC 的内容安全审核助手，负责判断一段文本是否包含违规内容。
+
+违规范围：色情低俗、暴力血腥、违法犯罪（赌博/毒品/诈骗等）、自残自杀引导、政治敏感、人身攻击辱骂。
+正常的知识讲解（包括游戏规则、历史战争、医学常识）不算违规。
+
+输出要求：只输出 JSON，不要解释文字，不要代码块围栏。
+违规：{"safe": false, "reason": "一句话原因"}
+安全：{"safe": true, "reason": ""}"""
 
 OUTLINE_PROMPT = """你是 MAIC（多智能体互动课堂）的课件策划，负责把一个主题拆成「由浅入深」的讲解大纲，并写出可以直接念出来的口播讲稿。
 
@@ -246,39 +281,7 @@ def _parse_json(raw: str) -> dict:
         return {}
     return data if isinstance(data, dict) else {}
 
-# 节点1
-async def content_analysis_node(state: SimpleState) -> dict:
-    '''分析内容，判断是否为需要讲解'''
-    print('来到这里',state)
-    _emit("check", "start", message="开始检查是否可以讲解")
-    user_issue = (state.get("userIssue") or "").strip()
-
-    # 空输入不必走模型，直接给引导语
-    if not user_issue:
-        _emit("check", "done")
-        return {"needLecture": False, "reply": DEFAULT_GREETING, "topic": ""}
-
-    # 分类任务用温度 0，保证同样的输入得到同样的判定
-    raw = await _invoke_text(CONTENT_ANALYSIS_PROMPT, f"用户输入：{user_issue}", temperature=0)
-    data = _parse_json(raw)
-
-    need_lecture = data.get("needLecture")
-    if not isinstance(need_lecture, bool):
-        # 模型没给出可用结论时按「需要讲解」兜底，避免用户的请求被静默吞掉
-        logger.warning("内容分析未返回布尔型 needLecture，按需要讲解处理：%s", raw)
-        need_lecture = True
-    print('节点一输出内容',need_lecture,data)
-    _emit("check", "done")
-    if not need_lecture:
-        reply = str(data.get("reply", "")).strip() or DEFAULT_GREETING
-        # 闲聊：图在此短路结束，reply 事件由流式接口按最终状态统一推送
-        return {"needLecture": False, "reply": reply, "topic": ""}
-
-    # 需要讲解：产出规范化主题，交给 text_organization_node
-    topic = str(data.get("topic", "")).strip() or user_issue
-    # 插一步「讲解主题」：等待页展示「讲解主题：xxx」；闲聊分支不发，直接结束
-    _emit("topic", "start", topic=topic, message=f"讲解主题：{topic}")
-    return {"needLecture": True, "topic": topic}
+# 旧 content_analysis_node 已迁往 agents/intent_agent.py
 
 def _as_str_list(value) -> list[str]:
     """把模型输出统一成字符串列表：字符串按换行拆开，列表逐项转字符串，其余视为空。"""
@@ -515,15 +518,26 @@ def _inject_fit(html: str) -> str:
     return html[:at] + _FIT_SCRIPT + "\n" + html[at:]
 
 
-async def _build_page(topic: str, module: CatalogModule, total: int) -> str:
+async def _build_page(
+    topic: str,
+    module: CatalogModule,
+    total: int,
+    on_error: Optional[Callable[[Exception], None]] = None,
+) -> str:
     """根据一个模块的大纲（口播讲稿）生成对应 HTML 页面，失败时回退到兜底模板。
 
     出口统一注入自适配脚本：任一路径（模型页 / 片段包装 / 兜底页）产出的
-    页面在窄容器里溢出时都会自动缩回一屏内，不再出现滚动条和内容裁切。"""
-    return _inject_fit(await _build_page_raw(topic, module, total))
+    页面在窄容器里溢出时都会自动缩回一屏内，不再出现滚动条和内容裁切。
+    on_error：页面降级到兜底模板时的回调（供 page_agent 上报失败清单），默认不通知。"""
+    return _inject_fit(await _build_page_raw(topic, module, total, on_error))
 
 
-async def _build_page_raw(topic: str, module: CatalogModule, total: int) -> str:
+async def _build_page_raw(
+    topic: str,
+    module: CatalogModule,
+    total: int,
+    on_error: Optional[Callable[[Exception], None]] = None,
+) -> str:
     """生成页面本体（不注入脚本），失败时回退到兜底模板。"""
     user_prompt = (
         f"整套课件主题：{topic}\n"
@@ -536,6 +550,8 @@ async def _build_page_raw(topic: str, module: CatalogModule, total: int) -> str:
         raw = await _invoke_text(PAGE_PROMPT, user_prompt, temperature=0.5)
     except Exception as exc:
         logger.warning("第 %s 页生成失败，使用兜底模板：%s", module["ind"], exc)
+        if on_error is not None:
+            on_error(exc)
         return _fallback_page(topic, module)
 
     page = _clean_html(raw)
@@ -544,160 +560,12 @@ async def _build_page_raw(topic: str, module: CatalogModule, total: int) -> str:
     if page.startswith("<"):  # 模型只给了片段，补成完整文档
         return _finish_html(page)
     logger.warning("第 %s 页输出不像 HTML，使用兜底模板：%s", module["ind"], raw[:200])
+    if on_error is not None:
+        on_error(RuntimeError("模型输出不是可用的 HTML 页面"))
     return _fallback_page(topic, module)
 
-# 节点2
-async def text_organization_node(state:SimpleState):
-    '''根据主题查找资料，生成大纲,并生成对应页面（需要自体校验）'''
-    topic = (state.get("topic") or state.get("userIssue") or "").strip()
-    print('节点二输入主题', topic)
-    _emit("outline", "start", message="正在生成大纲…")
+# 旧 text_organization_node 已拆为 agents/query_rewrite_agent.py、agents/research_agent.py、
+# agents/outline_agent.py、agents/page_agent.py
 
-    # 兜底：没有主题就无从讲解，直接交回引导语
-    if not topic:
-        return {"needLecture": False, "reply": DEFAULT_GREETING, "catalogList": [], "pageList": []}
-
-    # 1. 先问模型这是不是三国杀，确认相关才去检索，避免无关主题白白触发向量库
-    docs: list[str] = []
-    if await _is_sanguosha_topic(topic):
-        docs = await _search_sanguosha_docs(topic)
-        print(f'节点二命中三国杀知识库，召回 {len(docs)} 条资料')
-
-    # 2. 带着检索结果回到模型：融合自身知识与 RAG 内容，按由浅入深产出大纲
-    catalog = await _build_catalog(topic, docs)
-    total = len(catalog)
-    _emit("outline", "done", total=total)
-    _emit("pages", "start", total=total, message="正在生成页面…")
-
-    # 3. 每个模块生成一页 HTML：并发请求，gather 保证返回顺序与 catalog 一致；
-    #    包一层计数器，每完成一页就上报一次 x/n（计数只用于上报，不改变返回顺序）
-    pages_done = 0
-
-    async def _build_page_reported(module: CatalogModule) -> str:
-        nonlocal pages_done
-        page = await _build_page(topic, module, total)
-        pages_done += 1
-        _emit("pages", "progress", current=pages_done, total=total)
-        return page
-
-    pages_html = await asyncio.gather(
-        *(_build_page_reported(module) for module in catalog)
-    )
-
-    # 4. 汇总成 [{ind, context: 本部分大纲, htmlpage: 本部分对应的 HTML}]
-    page_list: list[PageModule] = [
-        {"ind": module["ind"], "context": _module_outline(module), "htmlpage": page}
-        for module, page in zip(catalog, pages_html)
-    ]
-    print('节点二产出页面数', len(page_list))
-    return {"catalogList": catalog, "pageList": page_list}
-
-# 节点3
-async def audio_node(state: SimpleState):
-    '''把每个模块的口播讲稿清洗后合成 TTS 音频，并读回时长。
-
-    台词直接复用节点2大纲里的 context（本就是可朗读的口播讲稿），不调模型二次生成；
-    各模块并发合成，单页失败只记日志、该页走时长估算兜底，不阻断整体。
-    '''
-    catalog: list[CatalogModule] = state.get("catalogList") or []
-    if not catalog:
-        return {"audioList": []}
-
-    total = len(catalog)
-    _emit("audio", "start", total=total, message="正在合成音频…")
-    audio_dir = OUTPUT_DIR / "audio"
-    audio_dir.mkdir(parents=True, exist_ok=True)
-
-    async def _synthesize(module: CatalogModule) -> AudioModule:
-        ind = module["ind"]
-        script = _clean_script("\n".join(module["context"]))
-        audio_path = ""
-        duration = estimate_duration(script)
-
-        if script:
-            target = audio_dir / f"{uuid4().hex}.mp3"
-            try:
-                await tts_save(script, target)
-                audio_path = str(target)
-                try:
-                    duration = read_duration(target)
-                except Exception as exc:
-                    logger.warning("第 %s 页音频时长读取失败，按字数估算：%s", ind, exc)
-            except Exception as exc:
-                logger.warning("第 %s 页 TTS 合成失败，该页将无旁白：%s", ind, exc)
-
-        return {
-            "ind": ind,
-            "context": script,
-            "audio_path": audio_path,
-            "duration": duration,
-        }
-
-    # 计数器包装：每合成完一页上报一次 x/n（计数只用于上报，不改变返回顺序）
-    audio_done = 0
-
-    async def _synthesize_reported(module: CatalogModule) -> AudioModule:
-        nonlocal audio_done
-        item = await _synthesize(module)
-        audio_done += 1
-        _emit("audio", "progress", current=audio_done, total=total)
-        return item
-
-    audio_list = await asyncio.gather(*(_synthesize_reported(module) for module in catalog))
-    print("节点三产出音频数", len(audio_list))
-    return {"audioList": list(audio_list)}
-
-# 节点4
-async def html_audio_assemble(state: SimpleState):
-    '''整理页面 + 音频，组装成自包含课件 HTML（暂不导出 MP4，见下方注释）。
-
-    组装只依赖前面节点的结构化产出，不调模型；
-    视频导出与课件 HTML 互不冲突（MP4 只依赖前面产物），先整体注释停用。
-    '''
-    topic = (state.get("topic") or state.get("userIssue") or "课件").strip()
-    pages: list[PageModule] = state.get("pageList") or []
-    audios: list[AudioModule] = state.get("audioList") or []
-
-    _emit("assemble", "start", total=len(pages), message="正在组装课件…")
-
-    if not pages:
-        logger.warning("没有页面，跳过组装与导出")
-        _emit("assemble", "done", message="没有可组装的页面")
-        return {"courseHtml": "", "videoUrl": ""}
-
-    video_dir = OUTPUT_DIR / "videos"
-    video_dir.mkdir(parents=True, exist_ok=True)
-    uid = uuid4().hex
-
-    # 1. 组装课件 HTML（每页 base64 音频 + 固定播放 JS），落盘可直接双击播放
-    course_html = build_course_html(topic, pages, audios)
-    course_path = video_dir / f"{uid}.html"
-    course_path.write_text(course_html, encoding="utf-8")
-    _emit("assemble", "done", message="课件组装完成")
-
-    # 2. 截帧 + FFmpeg 合成 MP4；与课件 HTML 不冲突（MP4 只依赖前面产物）。
-    #    暂不导出视频（等待页只需课件 HTML 即可开始学习），需要时取消下方注释即可恢复。
-    # audio_by_ind = {int(a.get("ind") or 0): a for a in audios}
-    # audio_paths: list[str] = []
-    # durations: list[float] = []
-    # for page in pages:
-    #     audio = audio_by_ind.get(int(page.get("ind") or 0), {})
-    #     audio_paths.append(str(audio.get("audio_path") or ""))
-    #     duration = audio.get("duration")
-    #     if not duration:
-    #         duration = estimate_duration(str(page.get("context") or ""))
-    #     durations.append(float(duration))
-    #
-    # video_path = ""
-    # try:
-    #     frames = await render_page_frames([page["htmlpage"] for page in pages])
-    #     video_path = str(
-    #         await asyncio.to_thread(export_mp4, frames, audio_paths, durations, video_dir)
-    #     )
-    # except Exception as exc:
-    #     logger.warning("视频导出失败，本次仅交付课件 HTML：%s", exc)
-
-    video_path = ""  # 暂不导出视频，恒为空串
-
-    print("节点四产出课件", course_path.name, "视频", video_path or "无")
-    return {"courseHtml": str(course_path), "videoUrl": video_path}
+# 旧 audio_node 已迁往 agents/audio_agent.py；
+# 旧 html_audio_assemble 已迁往 agents/assemble_agent.py（MP4 注释块原样保留）。

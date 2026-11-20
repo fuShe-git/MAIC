@@ -1,6 +1,10 @@
-import { useRef, useState } from 'react'
-import { streamMessage } from './api/chat'
-import type { ChatResponse, ProgressEvent, ProgressStep } from './api/chat'
+import { useEffect, useRef, useState } from 'react'
+import { cancelGeneration, chatStream, confirmOutline, retryFailedPages } from './api/chat'
+import type { ChatResponse, OutlineModule, ProgressEvent, ProgressStep } from './api/chat'
+import { generatedHtmlUrl, listGeneratedFiles } from './api/generated'
+import type { GeneratedCourse } from './api/generated'
+import ConfirmView from './components/ConfirmView'
+import CourseList from './components/CourseList'
 import LecturePlayer from './components/LecturePlayer'
 import GeneratingView from './components/GeneratingView'
 import type { WaitStatus } from './components/GeneratingView'
@@ -46,28 +50,109 @@ const INITIAL_WAIT: WaitState = {
 
 function App() {
   const [prompt, setPrompt] = useState('')
-  // 视图三态：home 首页 → waiting 等待页 → player 课件页
-  const [view, setView] = useState<'home' | 'waiting' | 'player'>('home')
+  // 视图五态：home 首页 → waiting 等待页 → confirm 确认大纲 → player 课件页；courses 课件库
+  const [view, setView] = useState<'home' | 'waiting' | 'confirm' | 'player' | 'courses'>('home')
   const [busy, setBusy] = useState(false)
   const [wait, setWait] = useState<WaitState>(INITIAL_WAIT)
   const [lecture, setLecture] = useState<ChatResponse | null>(null)
-  // 当前进行中的流；返回首页时用它 abort（中断请求）
+  // 会话 id：每次生成固定一个，失败页重试靠它定位产物快照
+  const [sessionId] = useState(() => `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`)
+  // 等待人工确认的大纲 + 图线程 id（confirm 视图数据源）
+  const [pendingOutline, setPendingOutline] = useState<OutlineModule[]>([])
+  const [threadId, setThreadId] = useState('')
+  // 当前进行中的流；返回首页/中断时用它 abort（中断请求）
   const abortRef = useRef<AbortController | null>(null)
+  // 当前生成任务 id：中断时用它通知后端真正取消后台任务
+  const runIdRef = useRef('')
+  // 讲解主题暂存：handleEvent 闭包里的 wait 会过期，done 事件取 topic 用 ref
+  const topicRef = useRef('')
+  // 本轮流是否已收到终态事件（done/reply/error/confirm/retry-done）：断流兜底判据
+  const settledRef = useRef(false)
+  // 首页生成记录：videos 目录下的全部课件
+  const [generated, setGenerated] = useState<GeneratedCourse[]>([])
+  const [generatedLoaded, setGeneratedLoaded] = useState(false)
+
+  // 进入首页时拉取生成记录；后端不可用时静默降级为空列表
+  useEffect(() => {
+    if (view !== 'home') return
+    const controller = new AbortController()
+    listGeneratedFiles(controller.signal)
+      .then((data) => setGenerated(data.items ?? []))
+      .catch(() => setGenerated([]))
+      .finally(() => setGeneratedLoaded(true))
+    return () => controller.abort()
+  }, [view])
+
+  // 刷新/关闭页面：通知后端取消后台生成任务（keepalive 尽力保证请求送达）
+  useEffect(() => {
+    const notifyCancel = () => {
+      const runId = runIdRef.current
+      if (runId) cancelGeneration(runId, true).catch(() => {})
+    }
+    window.addEventListener('pagehide', notifyCancel)
+    return () => window.removeEventListener('pagehide', notifyCancel)
+  }, [])
 
   /** 把单条 SSE 进度事件映射到等待页状态 */
   function handleEvent(event: ProgressEvent) {
-    if (event.step === 'done' && event.data) {
+    if (event.step === 'confirm' && event.catalogList) {
+      // 大纲产出后停在 interrupt：进入人工确认视图（编辑后继续，或取消）
+      settledRef.current = true
+      setPendingOutline(event.catalogList)
+      setThreadId(event.threadId ?? '')
+      setView('confirm')
+      return
+    }
+    if (event.step === 'confirm') {
+      // 取消收尾的 confirm/done 通知（无大纲），无需处理
+      return
+    }
+    if (event.step === 'retry') {
+      // 手动重试失败页的进度与终态（done 带刷新后的产物与失败清单）
+      if (event.status === 'done') {
+        settledRef.current = true
+        setLecture((prev) =>
+          prev
+            ? {
+                ...prev,
+                courseHtml: event.courseHtml ?? prev.courseHtml,
+                partial: event.partial ?? prev.partial ?? false,
+                failedPages: event.failedPages ?? prev.failedPages ?? [],
+              }
+            : prev,
+        )
+        setWait((prev) => ({ ...prev, status: 'ready', step: 'assemble', message: event.message ?? '' }))
+      } else {
+        setWait((prev) => ({ ...prev, status: 'retrying', step: 'retry', message: event.message ?? '' }))
+      }
+      return
+    }
+    if (event.step === 'done') {
       // 课件就绪：数据存起来，但停留等待页，等用户点「开始学习」
-      setLecture(event.data)
+      settledRef.current = true
+      setLecture((prev) => ({
+        reply: prev?.reply ?? '',
+        needLecture: true,
+        topic: topicRef.current,
+        courseHtml: event.courseHtml ?? prev?.courseHtml ?? '',
+        videoUrl: event.videoUrl ?? prev?.videoUrl ?? '',
+        pageList: prev?.pageList ?? [],
+        partial: event.partial ?? prev?.partial ?? false,
+        failedPages: event.failedPages ?? prev?.failedPages ?? [],
+        threadId: event.threadId ?? prev?.threadId ?? '',
+        courseId: event.courseId ?? prev?.courseId ?? '',
+      }))
       setWait((prev) => ({ ...prev, status: 'ready', step: 'assemble', message: '' }))
       return
     }
     if (event.step === 'reply') {
       // 闲聊：卡片内直接展示回复文本
+      settledRef.current = true
       setWait((prev) => ({ ...prev, status: 'reply', step: null, message: event.message ?? '' }))
       return
     }
     if (event.step === 'error') {
+      settledRef.current = true
       if (event.status === 'retrying') {
         // 后端已重新跑图：进度归零，回到第一个步骤重新推进
         setWait({ ...INITIAL_WAIT, status: 'retrying', message: event.message ?? '' })
@@ -80,6 +165,7 @@ function App() {
 
     // 过程进度：check / topic / outline / pages / audio / assemble
     // 重试期间停留在 retrying 态（保留「重试中」提示），直到重新走完检查进入大纲阶段
+    if (event.step === 'topic' && event.topic) topicRef.current = event.topic
     setWait((prev) => ({
       ...prev,
       status: prev.status === 'retrying' && event.step !== 'check' ? 'running' : prev.status,
@@ -103,13 +189,19 @@ function App() {
   function startGeneration(text: string) {
     if (!text || busy) return
     const controller = new AbortController()
+    const runId = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     abortRef.current = controller
+    runIdRef.current = runId
     setBusy(true)
     setLecture(null)
+    setPendingOutline([])
+    setThreadId('')
+    topicRef.current = ''
+    settledRef.current = false
     setWait(INITIAL_WAIT)
     setView('waiting')
 
-    streamMessage(text, handleEvent, controller.signal)
+    chatStream({ message: text, sessionId, runId }, handleEvent, controller.signal)
       .catch((err: unknown) => {
         // 用户主动返回首页触发的中断不按错误处理
         if (controller.signal.aborted) return
@@ -120,8 +212,9 @@ function App() {
         }))
       })
       .then(() => {
-        // 流正常结束但始终没等到终态事件（异常断流）：兜底按失败展示，避免一直卡在进行中
-        if (controller.signal.aborted) return
+        // 流正常结束但始终没等到终态事件（异常断流）：兜底按失败展示，避免一直卡在进行中；
+        // confirm 等终态事件会切走视图且 settledRef 已置位，不误判为断流
+        if (controller.signal.aborted || settledRef.current) return
         setWait((prev) =>
           prev.status === 'running' || prev.status === 'retrying'
             ? { ...prev, status: 'failed', message: '连接已断开，请重新生成' }
@@ -131,6 +224,7 @@ function App() {
       .finally(() => {
         if (abortRef.current === controller) {
           abortRef.current = null
+          runIdRef.current = ''
           setBusy(false)
         }
       })
@@ -140,14 +234,38 @@ function App() {
     startGeneration(prompt.trim())
   }
 
-  /** 等待页「返回首页 / 返回」：中断流并复位 */
-  function handleBackToHome() {
+  /**
+   * 统一中断：断开前端 SSE 连接 + 通知后端 cancel 后台任务。
+   * 返回当前 runId（供确认页等复用）；中断后 ref 立即清空，避免重复通知。
+   */
+  function cancelActiveRun(): string {
+    const runId = runIdRef.current
     abortRef.current?.abort()
     abortRef.current = null
+    runIdRef.current = ''
+    if (runId) {
+      // 通知后端真正停止跑图；刷新/卸载场景用 keepalive 提高送达率
+      cancelGeneration(runId, true).catch(() => {
+        // 取消失败不影响本地中断（服务端 SSE finally 也会兜底 cancel）
+      })
+    }
+    return runId
+  }
+
+  /** 等待页「返回首页 / 返回」：中断前后端并复位 */
+  function handleBackToHome() {
+    cancelActiveRun()
     setBusy(false)
     setLecture(null)
     setWait(INITIAL_WAIT)
     setView('home')
+  }
+
+  /** 等待页「中断生成」：中断前后端，停留在等待页展示「已中断」 */
+  function handleInterruptGeneration() {
+    cancelActiveRun()
+    setBusy(false)
+    setWait((prev) => ({ ...prev, status: 'interrupted', message: '你已中断本次生成' }))
   }
 
   /** 等待页「重新生成」：用同一段输入重新发起 */
@@ -155,9 +273,110 @@ function App() {
     startGeneration(prompt.trim())
   }
 
+  /** 确认视图「确认并生成」：携带编辑后的大纲恢复图执行，重新进等待页 */
+  function handleConfirmOutline(catalog: OutlineModule[]) {
+    if (!threadId || busy) return
+    const controller = new AbortController()
+    const runId = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    abortRef.current = controller
+    runIdRef.current = runId
+    setBusy(true)
+    setPendingOutline([])
+    settledRef.current = false
+    setWait(INITIAL_WAIT)
+    setView('waiting')
+
+    confirmOutline({ threadId, catalogList: catalog, confirmed: true, runId }, handleEvent, controller.signal)
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setWait((prev) => ({
+          ...prev,
+          status: 'failed',
+          message: err instanceof Error ? err.message : '网络异常，请稍后重试',
+        }))
+      })
+      .then(() => {
+        if (controller.signal.aborted || settledRef.current) return
+        setWait((prev) =>
+          prev.status === 'running' || prev.status === 'retrying'
+            ? { ...prev, status: 'failed', message: '连接已断开，请重新生成' }
+            : prev,
+        )
+      })
+      .finally(() => {
+        if (abortRef.current === controller) {
+          abortRef.current = null
+          runIdRef.current = ''
+          setBusy(false)
+        }
+      })
+  }
+
+  /** 确认视图「取消」：通知后端取消本次生成，回首页 */
+  function handleCancelOutline() {
+    if (threadId && !busy) {
+      confirmOutline({ threadId, confirmed: false }, () => {}).catch((err: unknown) => {
+        console.error('取消生成失败：', err)
+      })
+    }
+    setPendingOutline([])
+    setThreadId('')
+    setView('home')
+  }
+
+  /** 结果页「重试失败页」：图外直调重跑，进度复用等待页的 retrying 态 */
+  function handleRetryFailed() {
+    if (busy) return
+    const controller = new AbortController()
+    const runId = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    abortRef.current = controller
+    runIdRef.current = runId
+    setBusy(true)
+    settledRef.current = false
+    setWait((prev) => ({ ...prev, status: 'retrying', step: 'retry', message: '正在重试失败的页面…' }))
+
+    retryFailedPages({ sessionId, runId }, handleEvent, controller.signal)
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setWait((prev) => ({
+          ...prev,
+          status: 'failed',
+          message: err instanceof Error ? err.message : '网络异常，请稍后重试',
+        }))
+      })
+      .then(() => {
+        if (controller.signal.aborted || settledRef.current) return
+        setWait((prev) =>
+          prev.status === 'retrying'
+            ? { ...prev, status: 'failed', message: '连接已断开，请重试' }
+            : prev,
+        )
+      })
+      .finally(() => {
+        if (abortRef.current === controller) {
+          abortRef.current = null
+          runIdRef.current = ''
+          setBusy(false)
+        }
+      })
+  }
+
   /** 等待页「开始学习」：进入课件播放页 */
   function handleStart() {
     if (!lecture) return
+    setView('player')
+  }
+
+  /** 打开生成记录里的课件：拼同源 HTML 地址，走与「开始学习」相同的播放器视图 */
+  function handleOpenGenerated(course: GeneratedCourse) {
+    setLecture({
+      reply: '',
+      needLecture: true,
+      topic: course.topic,
+      courseHtml: generatedHtmlUrl(course.fileName),
+      videoUrl: '',
+      pageList: [],
+    })
     setView('player')
   }
 
@@ -168,11 +387,26 @@ function App() {
     setView('home')
   }
 
+  if (view === 'confirm') {
+    return (
+      <ConfirmView
+        catalogList={pendingOutline}
+        onConfirm={handleConfirmOutline}
+        onCancel={handleCancelOutline}
+        busy={busy}
+      />
+    )
+  }
+
+  if (view === 'courses') {
+    return <CourseList onBack={() => setView('home')} />
+  }
+
   if (view === 'player' && lecture) {
     return (
       <LecturePlayer
         topic={lecture.topic}
-        pageList={lecture.pageList}
+        pageList={lecture.pageList ?? []}
         courseHtml={lecture.courseHtml}
         videoUrl={lecture.videoUrl}
         reply={lecture.reply}
@@ -194,8 +428,10 @@ function App() {
         topic={wait.topic}
         lecture={lecture}
         onBack={handleBackToHome}
+        onInterrupt={handleInterruptGeneration}
         onRetry={handleRetry}
         onStart={handleStart}
+        onRetryFailed={handleRetryFailed}
       />
     )
   }
@@ -206,6 +442,9 @@ function App() {
         <div className="brand-row">
           <img className="brand-icon" src="/img/bitbug_favicon.ico" alt="MAIC" />
           <h1 className="brand-name">MAIC</h1>
+          <button className="btn-courses" type="button" onClick={() => setView('courses')}>
+            我的课件
+          </button>
         </div>
       </header>
 
@@ -245,6 +484,44 @@ function App() {
           </button>
         </div>
       </main>
+
+      <section className="history">
+        <div className="history-head">
+          <span className="history-title">生成记录</span>
+          {generated.length > 0 ? <span className="history-count">共 {generated.length} 份</span> : null}
+        </div>
+        {!generatedLoaded ? (
+          <div className="history-empty">加载中…</div>
+        ) : generated.length === 0 ? (
+          <div className="history-empty">暂无生成记录</div>
+        ) : (
+          <div className="history-list">
+            {generated.map((course) => (
+              <button
+                className="history-card"
+                key={course.id}
+                type="button"
+                onClick={() => handleOpenGenerated(course)}
+              >
+                <span className="history-cover" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M8 6.5v11l9-5.5-9-5.5Z"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span className="history-info">
+                  <span className="history-name">{course.topic}</span>
+                  <span className="history-meta">已生成 · 点击继续学习</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }

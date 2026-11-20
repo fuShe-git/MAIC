@@ -38,6 +38,8 @@ export default function LecturePlayer({
   const [frameReady, setFrameReady] = useState(false)
   const [pageLabel, setPageLabel] = useState('1 / 1')
   const [playing, setPlaying] = useState(false)
+  /** 课件已进入课后练习：底部控制区切换为「重新观看」 */
+  const [quizMode, setQuizMode] = useState(false)
   /** 逐页兜底模式下的当前页下标 */
   const [pageIndex, setPageIndex] = useState(0)
   const [videoTime, setVideoTime] = useState(0)
@@ -67,6 +69,7 @@ export default function LecturePlayer({
     setPageLabel('1 / 1')
     setPlaying(false)
     setPageIndex(0)
+    setQuizMode(false)
   }, [source.kind, source.src])
 
   // 课件 HTML 长时间未加载成功 → 判定失败并降级
@@ -84,6 +87,8 @@ export default function LecturePlayer({
     if (num) setPageLabel(num)
     const start = doc.getElementById('start')?.textContent?.trim()
     if (start) setPlaying(start === '暂停')
+    // 课件脚本在进入练习时给 body 打标记，前端据此切换底部控制区
+    setQuizMode(doc.body.classList.contains('quiz-mode'))
   }, [])
 
   // 课件就绪后轮询内部状态（卸载即清理，防止内存泄漏）
@@ -121,6 +126,19 @@ export default function LecturePlayer({
     },
     [markFailed, syncFromFrame],
   )
+
+  /** 退出练习并从头重看：通知课件恢复画面、回到第一页，前端同步复位状态 */
+  const handleRewatch = useCallback(() => {
+    const doc = frameRef.current?.contentDocument
+    if (!doc) {
+      markFailed('html')
+      return
+    }
+    doc.dispatchEvent(new CustomEvent('course:rewatch'))
+    setQuizMode(false)
+    setPlaying(false)
+    syncFromFrame()
+  }, [markFailed, syncFromFrame])
 
   function toggleVideo() {
     const video = videoRef.current
@@ -231,28 +249,34 @@ export default function LecturePlayer({
       </main>
 
       <footer className="lp-bar">
-        <LectureControls
-          kind={source.kind}
-          pageLabel={pageLabel}
-          playing={playing}
-          atFirst={atFirst}
-          atLast={atLast}
-          pageIndex={pageIndex}
-          pageTotal={pageTotal}
-          videoTime={videoTime}
-          videoDuration={videoDuration}
-          videoPlaying={videoPlaying}
-          onPrev={() => clickInside('prev')}
-          onToggle={() => (source.kind === 'video' ? toggleVideo() : clickInside('start'))}
-          onNext={() => clickInside('next')}
-          onPageIndexChange={setPageIndex}
-          onSeek={(time) => {
-            const video = videoRef.current
-            if (!video) return
-            video.currentTime = time
-            setVideoTime(time)
-          }}
-        />
+        {quizMode ? (
+          <button className="lp-ctrl is-primary" type="button" onClick={handleRewatch}>
+            重新观看
+          </button>
+        ) : (
+          <LectureControls
+            kind={source.kind}
+            pageLabel={pageLabel}
+            playing={playing}
+            atFirst={atFirst}
+            atLast={atLast}
+            pageIndex={pageIndex}
+            pageTotal={pageTotal}
+            videoTime={videoTime}
+            videoDuration={videoDuration}
+            videoPlaying={videoPlaying}
+            onPrev={() => clickInside('prev')}
+            onToggle={() => (source.kind === 'video' ? toggleVideo() : clickInside('start'))}
+            onNext={() => clickInside('next')}
+            onPageIndexChange={setPageIndex}
+            onSeek={(time) => {
+              const video = videoRef.current
+              if (!video) return
+              video.currentTime = time
+              setVideoTime(time)
+            }}
+          />
+        )}
       </footer>
     </div>
   )

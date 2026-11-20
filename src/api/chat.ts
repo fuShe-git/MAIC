@@ -1,158 +1,188 @@
-/** 大纲里的一个模块，与后端 CatalogItem 对应 */
-export interface CatalogItem {
-  /** 模块序号，从 1 开始 */
-  ind: number
-  /** 该模块内各知识点的标题 */
-  title: string[]
-  /** 与 title 一一对应的口播讲稿 */
-  context: string[]
-}
+import { API_BASE, fetchJson, fetchSse } from './http'
+import type { SseSignal } from './http'
 
-/** 一个模块对应的页面，即「本部分大纲 + 渲染用 HTML」 */
+/** 一个模块的页面数据（ind 与大纲/音频对应） */
 export interface PageItem {
-  /** 模块序号，与 catalogList 中同序号模块的 ind 一致 */
   ind: number
-  /** 本部分的大纲文本，即标题 + 口播讲稿 */
   context: string
-  /** 本部分对应的页面，完整 HTML 文档 */
   htmlpage: string
 }
 
-/** 后端 /api/chat 的返回结构（字段与 server/app/api/routes/chat.py 的 ChatResponse 对齐） */
-export interface ChatResponse {
-  /** 大模型回复的文本；闲聊时仅此字段有值 */
-  reply: string
-  /** 是否需要讲解；false 时下面的课件字段都是空的 */
-  needLecture: boolean
-  /** 识别出的讲解主题 */
-  topic: string
-  /** 讲解大纲，已按由浅入深的顺序排好 */
-  catalogList: CatalogItem[]
-  /** 讲解页面，与 catalogList 按 ind 一一对应 */
-  pageList: PageItem[]
-  /** 组装后的自包含课件 HTML 落盘路径（Windows 绝对路径）；未生成时为空串 */
-  courseHtml: string
-  /** 导出的 MP4 落盘路径（Windows 绝对路径）；未生成或导出失败时为空串 */
-  videoUrl: string
+/** 大纲模块：title/context 一一对应（知识点标题与口播讲稿） */
+export interface OutlineModule {
+  ind: number
+  title: string[]
+  context: string[]
 }
 
-/** 后端缺省字段时的兜底值，保证前端拿到的一定是完整结构 */
-const EMPTY_RESPONSE: ChatResponse = {
-  reply: '',
-  needLecture: false,
-  topic: '',
-  catalogList: [],
-  pageList: [],
-  courseHtml: '',
-  videoUrl: '',
-}
-
-/**
- * 调用后端对话接口，返回完整响应对象。
- * 开发环境由 Vite 代理转发到 http://127.0.0.1:8001/api/chat
- */
-export async function sendMessage(
-  message: string,
-  signal?: AbortSignal,
-): Promise<ChatResponse> {
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
-    signal,
-  })
-
-  if (!response.ok) {
-    let detail = `请求失败（HTTP ${response.status}）`
-    try {
-      const data: { detail?: string } = await response.json()
-      if (typeof data.detail === 'string') detail = data.detail
-    } catch {
-      // 响应体不是 JSON 时忽略，使用默认提示
-    }
-    throw new Error(detail)
-  }
-
-  const data = (await response.json()) as Partial<ChatResponse>
-  return { ...EMPTY_RESPONSE, ...data }
-}
-
-/** 生成进度事件的步骤名，与后端 nodes.py 的 _emit step 对齐 */
+/** 生成进度步骤（v4 新增 safety | quiz | confirm | retry） */
 export type ProgressStep =
   | 'check'
+  | 'safety'
   | 'topic'
   | 'outline'
   | 'pages'
   | 'audio'
+  | 'quiz'
   | 'assemble'
-  | 'reply'
   | 'done'
+  | 'reply'
   | 'error'
+  | 'confirm'
+  | 'retry'
 
-/** 后端 POST /api/chat/stream 推送的单条进度事件 */
+/**
+ * 生成进度事件（SSE 单条帧）。
+ * 字段为顶层平铺（与后端 _emit 的事件结构一致）：通用进度字段 +
+ * 各阶段领域字段（confirm 带 catalogList/threadId，done/retry 带产物与失败清单）。
+ */
 export interface ProgressEvent {
-  /** 步骤名 */
   step: ProgressStep
-  /** 状态：start 开始 / progress 进行中（带 current、total）/ done 完成 / retrying 重试中 / failed 最终失败 */
-  status: string
-  /** 当前进度（页面/音频的 x） */
+  status: 'start' | 'progress' | 'done' | 'failed' | 'retrying'
+  /** 阶段内进度：已完成数 */
   current?: number
-  /** 总数（页面/音频的 n）；0 表示拿不到总数，前端不展示 x/n */
+  /** 阶段内进度：总数 */
   total?: number
-  /** 展示给用户的文本（闲聊回复、错误原因等） */
+  /** 展示文案 */
   message?: string
-  /** step=topic 时的讲解主题，用于展示「讲解主题：xxx」 */
+  /** 讲解主题（topic 事件携带） */
   topic?: string
-  /** step=done 时携带的完整课件数据 */
-  data?: ChatResponse
+  /** 逐项进度：当前模块 ind（pages/audio/retry 事件携带） */
+  ind?: number
+  /** done/retry：组装后的课件 HTML 落盘路径 */
+  courseHtml?: string
+  /** done：导出的 MP4 落盘路径 */
+  videoUrl?: string
+  /** done/retry：True 表示有失败页的降级交付 */
+  partial?: boolean
+  /** done/retry：失败清单 [{ind, stage, error}] */
+  failedPages?: Array<{ ind: number; stage: string; error?: string }>
+  /** done：课件资产 id */
+  courseId?: string
+  /** confirm/done：图线程 id（确认恢复执行用） */
+  threadId?: string
+  /** confirm：待确认的大纲（人工确认用，可编辑） */
+  catalogList?: OutlineModule[]
+}
+
+/** POST /chat 返回体（v4 新增字段均为可选，完全兼容） */
+export interface ChatResponse {
+  reply: string
+  needLecture: boolean
+  topic: string
+  courseHtml: string
+  videoUrl: string
+  /** 逐页 HTML（done 事件不携带，仅 POST /chat 或降级兜底时有值） */
+  pageList?: PageItem[]
+  /** True 表示有失败页的降级交付 */
+  partial?: boolean
+  /** 失败清单 [{ind, stage, error}] */
+  failedPages?: Array<{ ind: number; stage: string; error?: string }>
+  threadId?: string
+  courseId?: string
+}
+
+/** 人工确认大纲的请求体（catalogList 传编辑后的大纲；confirmed=false 表示取消） */
+export interface ConfirmRequest {
+  threadId: string
+  catalogList?: OutlineModule[]
+  confirmed?: boolean
+  runId?: string
+}
+
+/** 手动重试失败页的请求体 */
+export interface RetryRequest {
+  sessionId?: string
+  threadId?: string
+  inds?: number[]
+  runId?: string
+}
+
+export interface ChatPayload {
+  message: string
+  sessionId?: string
+  threadId?: string
+  autoConfirm?: boolean
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>
+  runId?: string
 }
 
 /**
- * 调用后端流式接口，逐条回调进度事件（SSE：服务端通过长连接单向推送）。
- * 需要 POST 带请求体，所以用 fetch + ReadableStream 手动解析，而非 EventSource。
- * 网络错误、HTTP 非 200、流被截断都会抛错，由调用方展示失败态。
+ * 通知后端取消指定 runId 的生成任务（真正停止后台跑图，而非仅断开 SSE 连接）。
+ * keepalive=true 保证页面刷新/关闭时请求仍能送达。
  */
-export async function streamMessage(
-  message: string,
-  onEvent: (event: ProgressEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  const response = await fetch('/api/chat/stream', {
+export function cancelGeneration(runId: string, keepalive = false): Promise<{ cancelled: boolean }> {
+  return fetchJson<{ cancelled: boolean }>(`${API_BASE}/chat/cancel`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ runId }),
+    keepalive,
+  })
+}
+
+/**
+ * 一次性对话（不需要流式进度）。
+ */
+export function chatMessage(payload: ChatPayload, signal?: SseSignal): Promise<ChatResponse> {
+  return fetchJson<ChatResponse>(`${API_BASE}/chat`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
     signal,
   })
+}
 
-  if (!response.ok || !response.body) {
-    throw new Error(`请求失败（HTTP ${response.status}）`)
-  }
+/**
+ * 流式对话（SSE 进度流）：onEvent 逐条接收进度事件，完成后返回。
+ */
+export function chatStream(
+  payload: ChatPayload,
+  onEvent: (event: ProgressEvent) => void,
+  signal?: SseSignal,
+): Promise<void> {
+  return fetchSse<ProgressEvent>(`${API_BASE}/chat/stream`, onEvent, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    signal,
+  })
+}
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
+/**
+ * 兼容旧调用：只给输入文本的流式生成。
+ */
+export function streamMessage(
+  text: string,
+  onEvent: (event: ProgressEvent) => void,
+  signal?: SseSignal,
+): Promise<void> {
+  return chatStream({ message: text }, onEvent, signal)
+}
 
-  // 按空行分帧，兼容一次网络包里带多帧、一帧被拆到两个包的情况
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
+/**
+ * 人工确认大纲后恢复执行（SSE）。
+ * catalogList 传编辑后的大纲继续生成；confirmed=false 表示取消。
+ */
+export function confirmOutline(
+  request: ConfirmRequest,
+  onEvent: (event: ProgressEvent) => void,
+  signal?: SseSignal,
+): Promise<void> {
+  return fetchSse<ProgressEvent>(`${API_BASE}/chat/confirm`, onEvent, {
+    method: 'POST',
+    body: JSON.stringify(request),
+    signal,
+  })
+}
 
-    let boundary = buffer.indexOf('\n\n')
-    while (boundary !== -1) {
-      const frame = buffer.slice(0, boundary).trim()
-      buffer = buffer.slice(boundary + 2)
-      if (frame.startsWith('data:')) {
-        const payload = frame.slice(5).trim()
-        if (payload) {
-          try {
-            onEvent(JSON.parse(payload) as ProgressEvent)
-          } catch {
-            // 单帧解析失败不影响后续帧，忽略继续
-          }
-        }
-      }
-      boundary = buffer.indexOf('\n\n')
-    }
-  }
+/**
+ * 手动重试失败页（SSE）。失败清单与重试进度以事件推送。
+ */
+export function retryFailedPages(
+  request: RetryRequest,
+  onEvent: (event: ProgressEvent) => void,
+  signal?: SseSignal,
+): Promise<void> {
+  return fetchSse<ProgressEvent>(`${API_BASE}/chat/retry`, onEvent, {
+    method: 'POST',
+    body: JSON.stringify(request),
+    signal,
+  })
 }

@@ -12,8 +12,11 @@
 
 import base64
 import logging
+import shutil
 from html import escape
 from pathlib import Path
+
+from app.agent.nodes import OUTPUT_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -27,19 +30,14 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <title>{{TITLE}}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body { display: flex; flex-direction: column; align-items: center; justify-content: center;
-         background: #242424; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
-  .stage { position: relative; width: min(94vw, 1100px); aspect-ratio: 16 / 9; background: #000;
+  html { min-height: 100%; }
+  body { display: flex; flex-direction: column; align-items: center;
+         min-height: 100vh; background: #242424; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  .stage { position: relative; width: min(94vw, 1100px); aspect-ratio: 16 / 9; flex-shrink: 0; background: #000;
            border-radius: 12px; overflow: hidden; box-shadow: 0 24px 70px rgba(0, 0, 0, .45); }
   .page { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
   .page.active { display: block; }
-  .overlay { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center;
-             justify-content: center; background: rgba(0, 0, 0, .5); cursor: pointer; }
-  .overlay.hidden { display: none; }
-  .overlay .btn { background: #EC6520; color: #fff; font-size: 20px; letter-spacing: 2px;
-                  padding: 14px 42px; border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.3); }
-  .controls { display: flex; align-items: center; gap: 14px; margin-top: 18px; color: #eee; }
+  .controls { display: flex; flex-shrink: 0; align-items: center; gap: 14px; margin-top: 18px; color: #eee; }
   .controls button { background: #EC6520; color: #fff; border: 0; border-radius: 8px;
                      padding: 10px 24px; font-size: 15px; cursor: pointer; }
   .controls button:disabled { opacity: .4; cursor: not-allowed; }
@@ -49,7 +47,6 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 <body>
   <div class="stage">
 {{PAGES}}
-    <div class="overlay" id="overlay"><span class="btn">点击开始讲解</span></div>
   </div>
   <div class="controls">
     <button id="prev">上一页</button>
@@ -62,7 +59,6 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 (function () {
   var pages = Array.prototype.slice.call(document.querySelectorAll('.page'));
   var player = document.getElementById('player');
-  var overlay = document.getElementById('overlay');
   var pageNum = document.getElementById('pageNum');
   var prevBtn = document.getElementById('prev');
   var nextBtn = document.getElementById('next');
@@ -94,7 +90,14 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 
   // 从第 i 页开头完整播放（切页、自动翻页、重新播放都走这里）
   function play(i) {
-    if (i < 0 || i >= pages.length) { stop(); return; }
+    if (i < 0 || i >= pages.length) {
+      stop();
+      // 自然播完最后一页：通知外部（课后练习据此弹出进入确认）
+      if (i >= pages.length && pages.length > 0) {
+        document.dispatchEvent(new CustomEvent('course:finished'));
+      }
+      return;
+    }
     idx = i;
     render();
     player.pause();
@@ -141,19 +144,15 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   }
 
   player.addEventListener('ended', function () { play(idx + 1); });
-  overlay.addEventListener('click', function () {
-    overlay.classList.add('hidden');
-    play(idx);
-  });
-  startBtn.addEventListener('click', function () {
-    overlay.classList.add('hidden');
-    toggle();
-  });
+  startBtn.addEventListener('click', function () { toggle(); });
   prevBtn.addEventListener('click', function () { play(idx - 1); });
   nextBtn.addEventListener('click', function () { play(idx + 1); });
 
   render();
   syncBtn();
+
+  // 重新观看：从第一页重播（前端底部「重新观看」按钮派发该事件）
+  document.addEventListener('course:rewatch', function () { play(0); });
 })();
   </script>
 </body>
@@ -205,3 +204,17 @@ def build_course_html(topic: str, pages: list[dict], audios: list[dict]) -> str:
         .replace("{{PAGES}}", "\n".join(frames))
         .replace("{{EMPTY_MS}}", str(EMPTY_PAGE_MS))
     )
+
+
+def cleanup_audio_outputs() -> None:
+    """删除 outputs/audio 目录及其下所有中间音频（课件已内嵌 base64，不再需要）。
+
+    清理失败只记日志，不影响已生成的课件。
+    """
+    audio_dir = OUTPUT_DIR / "audio"
+    if not audio_dir.exists():
+        return
+    try:
+        shutil.rmtree(audio_dir)
+    except OSError as exc:
+        logger.warning("音频目录清理失败：%s（%s）", audio_dir, exc)

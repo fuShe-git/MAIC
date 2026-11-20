@@ -342,6 +342,16 @@
   border-color: rgba(96, 165, 250, 0.55);
   background: rgba(59, 130, 246, 0.16);
 }
+.gv-btn.is-danger {
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+}
+.gv-btn.is-danger:hover {
+  border-color: rgba(248, 113, 113, 0.9);
+  background: rgba(239, 68, 68, 0.2);
+  color: #fecaca;
+}
 
 .gv-meta {
   margin: 4px 0 0;

@@ -1,68 +1,121 @@
-"""把 nodes.py 里的节点串联成一张 LangGraph 图。
+"""LangGraph 图编排（v4 星形拓扑）。
 
-拓扑：
+拓扑：START → safety_input → supervisor ⇄ 子 agent（Send 并行）→ END
+- supervisor 决策写入 state.dispatch（agent 名列表），路由函数转成 Send 扇出；
+- 每个子 agent 执行完都回到 supervisor，由它决定下一步；
+- page_agent ∥ audio_agent 一次派两个 Send，分支全部回收后唤醒主管（一次）；
+- BoundedMemorySaver 记忆检查点支撑 interrupt（大纲人工确认）/ Command(resume) 恢复。
 
-    START → content_analysis ─┬─ needLecture = True  → text_organization → audio → html_audio_assemble → END
-                              └─ needLecture = False → END（直接返回闲聊回复）
-
-- `add_edge`：普通边，A 执行完必去 B；
-- `add_conditional_edges`：条件边，由路由函数的返回值决定下一站，这里用来做「闲聊就直接结束」的短路。
+对外接口：
+- run_classroom(user_issue, ...)：跑一整条生成链路，既有调用 run_classroom(msg) 不变；
+- resume_classroom(thread_id, answer)：人工确认后恢复执行。
 """
 
+from typing import Optional
+from uuid import uuid4
+
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, Send
 
-from app.agent.nodes import (
-    SimpleState,
-    audio_node,
-    content_analysis_node,
-    html_audio_assemble,
-    text_organization_node,
-)
+from app.agent.agents import AGENT_REGISTRY, safety_input_node
+from app.agent.checkpointer import BoundedMemorySaver
+from app.agent.nodes import SimpleState
+from app.agent.supervisor import supervisor_node
 
 
-def route_after_content_analysis(state: SimpleState) -> str:
-    """条件边路由：只有确认需要讲解时才往下走，否则直接结束。"""
-    return "text_organization" if state.get("needLecture") else END
+def _route_after_safety(state: SimpleState) -> str:
+    """输入审核后：被拦/闲聊短路 → END；正常 → 主管。"""
+    if state.get("needLecture") is False:
+        return END
+    return "supervisor"
 
 
-def build_graph():
-    """装配并编译图。
+def _route_from_supervisor(state: SimpleState) -> list:
+    """主管决策 → Send 扇出（可并行 1~2 个子 agent）；空派发 → END。"""
+    dispatch = state.get("dispatch") or []
+    if not dispatch:
+        return END
+    return [Send(name, state) for name in dispatch if name in AGENT_REGISTRY]
 
-    编译后的对象才能 invoke / ainvoke；这里没有 interrupt（中断）节点，
-    所以不需要 checkpointer（检查点存储）。
-    """
+
+def _build_graph():
+    """装配星形图并编译（挂记忆检查点）。"""
     graph = StateGraph(SimpleState)
 
-    # 1. 注册节点：节点名 → 执行函数
-    graph.add_node("content_analysis", content_analysis_node)
-    graph.add_node("text_organization", text_organization_node)
-    graph.add_node("audio", audio_node)
-    graph.add_node("html_audio_assemble", html_audio_assemble)
+    graph.add_node("safety_input", safety_input_node)
+    graph.add_node("supervisor", supervisor_node)
+    for name, spec in AGENT_REGISTRY.items():
+        graph.add_node(name, spec["func"])
 
-    # 2. 连边
-    graph.add_edge(START, "content_analysis")
+    graph.add_edge(START, "safety_input")
     graph.add_conditional_edges(
-        "content_analysis",
-        route_after_content_analysis,
-        {
-            "text_organization": "text_organization",
-            END: END,
-        },
+        "safety_input",
+        _route_after_safety,
+        ["supervisor", END],
     )
-    graph.add_edge("text_organization", "audio")
-    graph.add_edge("audio", "html_audio_assemble")
-    graph.add_edge("html_audio_assemble", END)
+    # Send 扇出不需要 path_map：Send 自带目标节点名
+    graph.add_conditional_edges("supervisor", _route_from_supervisor)
+    for name in AGENT_REGISTRY:
+        graph.add_edge(name, "supervisor")
 
-    return graph.compile()
-
-
-# 全局单例：图编译一次即可复用，不要每个请求都重新构建
-classroom_graph = build_graph()
+    return graph.compile(checkpointer=BoundedMemorySaver())
 
 
-async def run_classroom(user_issue: str) -> dict:
-    """跑一遍完整的图，userIssue 就是用户的输入内容。
+classroom_graph = _build_graph()
 
-    返回最终状态：闲聊时看 `reply`，需要讲解时看 `topic` 及后续节点产出的字段。
+
+def is_interrupted(state: dict) -> bool:
+    """判断图是否停在 interrupt（等待人工确认大纲）。"""
+    if state.get("__interrupt__"):
+        return True
+    return False
+
+
+async def run_classroom(
+    user_issue: str,
+    *,
+    thread_id: Optional[str] = None,
+    auto_confirm: bool = True,
+    history: Optional[list] = None,
+    session_id: str = "",
+) -> dict:
+    """跑一整条生成链路，返回最终状态（含 courseHtml / videoUrl 等）。
+
+    - thread_id：检查点线程键；不传则自动新生成（旧调用零破坏）；
+    - auto_confirm：True 跳过人工确认（默认，既有 POST /chat 行为不变）；
+      False 时大纲产出后图停在 interrupt，最终状态带 __interrupt__；
+    - history：多轮会话历史 [{role, content}]，供意图识别；
+    - session_id：会话 id，产物快照的键。
     """
-    return await classroom_graph.ainvoke({"userIssue": user_issue})
+    tid = (thread_id or "").strip() or uuid4().hex
+    config = {"configurable": {"thread_id": tid}}
+    initial: SimpleState = {
+        "userIssue": user_issue,
+        "needLecture": True,
+        "reply": "",
+        "topic": "",
+        "catalogList": [],
+        "audioList": [],
+        "pageList": [],
+        "courseHtml": "",
+        "videoUrl": "",
+        "history": [dict(item) for item in (history or [])],
+        "sessionId": (session_id or "").strip(),
+        "intent": "",
+        "reviseInds": [],
+        "courseId": "",
+        "outlineConfirmed": False,
+        "autoConfirm": bool(auto_confirm),
+        "failMessage": "",
+        "threadId": tid,
+        "outputUnsafe": False,
+        "dispatch": [],
+        "pageTargets": [],
+    }
+    return await classroom_graph.ainvoke(initial, config=config)
+
+
+async def resume_classroom(thread_id: str, answer: dict) -> dict:
+    """人工确认后恢复执行：answer = {confirmed, catalogList}。"""
+    config = {"configurable": {"thread_id": (thread_id or "").strip()}}
+    return await classroom_graph.ainvoke(Command(resume=answer), config=config)
