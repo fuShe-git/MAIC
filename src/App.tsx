@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { cancelGeneration, chatStream, confirmOutline, retryFailedPages } from './api/chat'
 import type { ChatResponse, OutlineModule, ProgressEvent, ProgressStep } from './api/chat'
+import { getCourse } from './api/courses'
 import { generatedHtmlUrl, listGeneratedFiles } from './api/generated'
 import type { GeneratedCourse } from './api/generated'
+import { toPageItems } from './utils/courseContext'
 import ConfirmView from './components/ConfirmView'
 import CourseList from './components/CourseList'
 import LecturePlayer from './components/LecturePlayer'
@@ -82,6 +84,27 @@ function App() {
       .finally(() => setGeneratedLoaded(true))
     return () => controller.abort()
   }, [view])
+
+  // 播放页缺少讲解正文时，按 courseId 从课件库补齐，供首次讨论携带整份课件
+  useEffect(() => {
+    if (view !== 'player' || !lecture?.courseId || (lecture.pageList?.length ?? 0) > 0) return
+    const controller = new AbortController()
+    const targetId = lecture.courseId
+    getCourse(targetId, controller.signal)
+      .then((course) => {
+        const pages = toPageItems(course.pageList)
+        if (pages.length === 0) return
+        setLecture((prev) =>
+          prev && prev.courseId === targetId && (prev.pageList?.length ?? 0) === 0
+            ? { ...prev, topic: prev.topic || course.topic, pageList: pages }
+            : prev,
+        )
+      })
+      .catch(() => {
+        // 课件库不可用时仍可讨论：后端会按 courseId 自行补齐正文
+      })
+    return () => controller.abort()
+  }, [view, lecture?.courseId, lecture?.pageList])
 
   // 刷新/关闭页面：通知后端取消后台生成任务（keepalive 尽力保证请求送达）
   useEffect(() => {
@@ -376,6 +399,7 @@ function App() {
       courseHtml: generatedHtmlUrl(course.fileName),
       videoUrl: '',
       pageList: [],
+      courseId: course.id,
     })
     setView('player')
   }
@@ -406,6 +430,7 @@ function App() {
     return (
       <LecturePlayer
         topic={lecture.topic}
+        courseId={lecture.courseId ?? ''}
         pageList={lecture.pageList ?? []}
         courseHtml={lecture.courseHtml}
         videoUrl={lecture.videoUrl}

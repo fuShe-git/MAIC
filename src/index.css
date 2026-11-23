@@ -4,6 +4,7 @@
   --text-dim: #8b8b9e;
   --accent: #8b7bff;
   --accent-2: #35d6c6;
+  --dp-width: 300px;
 
   --sans: system-ui, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei',
     sans-serif;
@@ -35,6 +36,11 @@ body {
 
 #root {
   min-height: 100svh;
+}
+
+html.discussion-open,
+body.discussion-open {
+  overflow: hidden;
 }
 
 button {

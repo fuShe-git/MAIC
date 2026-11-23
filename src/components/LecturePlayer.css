@@ -93,6 +93,38 @@
   text-overflow: ellipsis;
 }
 
+.lp-discuss-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #9b9bb0;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.lp-discuss-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.lp-discuss-toggle:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.lp.has-discussion .lp-top {
+  padding-right: calc(22px + var(--dp-width));
+}
+
 /* ---------- 中间内容区 ---------- */
 
 .lp-stage {
@@ -105,6 +137,21 @@
   width: min(1100px, 100%);
   margin: 0 auto;
   padding: 84px 24px 104px;
+}
+
+.lp-stage.has-discussion {
+  width: 100%;
+  padding-right: calc(24px + var(--dp-width));
+}
+
+.lp-stage-main {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
 
 .lp-frame {
@@ -360,6 +407,11 @@
 
   .lp-title {
     font-size: 15px;
+  }
+
+  .lp-discuss-toggle {
+    width: 28px;
+    height: 28px;
   }
 
   .lp-stage {

@@ -2,13 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PageItem } from '../api/chat'
 import { pickCourseSource } from '../utils/courseSource'
 import type { CourseSourceKind } from '../utils/courseSource'
+import DiscussionPanel from './DiscussionPanel'
 import LectureControls from './LectureControls'
 import './LecturePlayer.css'
 
 export interface LecturePlayerProps {
   /** 识别出的讲解主题，显示在左上角标题 */
   topic: string
-  /** 每个模块的页面 HTML，courseHtml 缺失时逐页兜底 */
+  /** 课件资产 id，讨论时供后端补齐正文 */
+  courseId: string
+  /** 每个模块的页面 HTML 与讲解正文，courseHtml 缺失时逐页兜底 */
   pageList: PageItem[]
   /** 组装后的课件 HTML 落盘路径，优先展示 */
   courseHtml: string
@@ -27,6 +30,7 @@ const POLL_MS = 400
 
 export default function LecturePlayer({
   topic,
+  courseId,
   pageList,
   courseHtml,
   videoUrl,
@@ -37,6 +41,8 @@ export default function LecturePlayer({
   const [failed, setFailed] = useState<CourseSourceKind[]>([])
   const [frameReady, setFrameReady] = useState(false)
   const [pageLabel, setPageLabel] = useState('1 / 1')
+  /** 讨论区展开状态；窄屏时表现为覆盖抽屉 */
+  const [discussionOpen, setDiscussionOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
   /** 课件已进入课后练习：底部控制区切换为「重新观看」 */
   const [quizMode, setQuizMode] = useState(false)
@@ -45,6 +51,16 @@ export default function LecturePlayer({
   const [videoTime, setVideoTime] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
   const [videoPlaying, setVideoPlaying] = useState(false)
+
+  // 展开讨论时锁住页面滚动，只保留消息列表内部滚动，避免整页出现滚动条
+  useEffect(() => {
+    document.documentElement.classList.toggle('discussion-open', discussionOpen)
+    document.body.classList.toggle('discussion-open', discussionOpen)
+    return () => {
+      document.documentElement.classList.remove('discussion-open')
+      document.body.classList.remove('discussion-open')
+    }
+  }, [discussionOpen])
 
   const frameRef = useRef<HTMLIFrameElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -127,6 +143,17 @@ export default function LecturePlayer({
     [markFailed, syncFromFrame],
   )
 
+  /** 讨论输入框聚焦时暂停讲解，避免音频与讨论互相干扰 */
+  const pauseCourseware = useCallback(() => {
+    if (source.kind === 'video') {
+      videoRef.current?.pause()
+      return
+    }
+    if (source.kind === 'html' && playing) {
+      clickInside('start')
+    }
+  }, [source.kind, playing, clickInside])
+
   /** 退出练习并从头重看：通知课件恢复画面、回到第一页，前端同步复位状态 */
   const handleRewatch = useCallback(() => {
     const doc = frameRef.current?.contentDocument
@@ -154,11 +181,14 @@ export default function LecturePlayer({
   const atFirst = Number.isFinite(cur) ? cur <= 1 : true
   const atLast = Number.isFinite(cur) && Number.isFinite(total) ? cur >= total : false
   const pageTotal = usablePages.length
+  // 逐页兜底模式下页码由前端控制，讨论区也跟着当前页走
+  const discussionPageLabel =
+    source.kind === 'pages' ? `${pageIndex + 1} / ${pageTotal || 1}` : pageLabel
   const showLoadMask = source.kind === 'html' && !frameReady
   const allFailed = source.kind === 'none' && failed.length > 0
 
   return (
-    <div className="lp">
+    <div className={`lp${discussionOpen ? ' has-discussion' : ''}`}>
       <header className="lp-top">
         <button className="lp-back" type="button" onClick={onBack} aria-label="返回主页面">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -175,9 +205,32 @@ export default function LecturePlayer({
           <span className="lp-kicker">课件播放</span>
           <h1 className="lp-title">{topic || '课堂讲解'}</h1>
         </div>
+        {!discussionOpen && (
+          <button
+            className="lp-discuss-toggle is-collapsed"
+            type="button"
+            onClick={() => setDiscussionOpen(true)}
+            aria-label="展开对话"
+            title="展开对话"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect
+                x="3"
+                y="4"
+                width="18"
+                height="16"
+                rx="2"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              />
+              <path d="M15 4v16" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
+          </button>
+        )}
       </header>
 
-      <main className="lp-stage">
+      <main className={`lp-stage${discussionOpen ? ' has-discussion' : ''}`}>
+        <div className="lp-stage-main">
         <div className="lp-frame">
           {source.kind === 'html' && (
             <iframe
@@ -246,6 +299,17 @@ export default function LecturePlayer({
             课件加载异常，已切换到备用内容（{source.kind === 'video' ? '视频' : '逐页展示'}）
           </p>
         )}
+        </div>
+
+        <DiscussionPanel
+          topic={topic}
+          courseId={courseId}
+          pageList={pageList}
+          pageLabel={discussionPageLabel}
+          open={discussionOpen}
+          onToggle={() => setDiscussionOpen(false)}
+          onFocusInput={pauseCourseware}
+        />
       </main>
 
       <footer className="lp-bar">

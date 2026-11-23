@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     # 允许跨域的来源，多个用英文逗号分隔
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
+    # 讨论：课件上下文字符预算（Token 是模型处理文本的基本单位，限制长度可控制费用与延迟）
+    discussion_context_chars: int = 16000
+    # 讨论：随请求携带的最近对话轮数
+    discussion_history_turns: int = 8
+    # 讨论：联网搜索返回条数
+    discussion_web_results: int = 3
+    # 联网搜索密钥（讨论在课件不足时使用）
+    tavily_api_key: str = ""
+
     @property
     def cors_origin_list(self) -> list[str]:
         """把逗号分隔的字符串拆成列表，并去掉空白项。"""
