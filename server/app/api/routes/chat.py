@@ -31,6 +31,7 @@ from app.agent.nodes import (
     _module_outline,
     set_progress_emitter,
 )
+from app.core.paths import artifact_url
 from app.storage import course_db
 from app.tools.audioCreate import tts_save
 from app.tools.courseAssemble import build_course_html, cleanup_audio_outputs
@@ -126,8 +127,9 @@ def _terminal_payload(state: dict) -> dict:
         "reply": state.get("reply") or "",
         "needLecture": bool(state.get("needLecture", True)),
         "topic": state.get("topic") or "",
-        "courseHtml": state.get("courseHtml") or "",
-        "videoUrl": state.get("videoUrl") or "",
+        # 内部 state/快照仍保存绝对路径（重试要写回文件），仅对外响应转成同源 URL
+        "courseHtml": artifact_url(state.get("courseHtml"), "html"),
+        "videoUrl": artifact_url(state.get("videoUrl"), "media"),
         "partial": bool(failed),
         "failedPages": failed,
         "threadId": state.get("threadId") or "",
@@ -573,7 +575,7 @@ async def _retry_failed_pages(session_id: str, inds: Optional[list]) -> None:
     _emit(
         "retry",
         "done",
-        courseHtml=course_html_path,
+        courseHtml=artifact_url(course_html_path, "html"),
         failedPages=remaining,
         partial=bool(remaining),
         message="重试完成" if not remaining else "重试完成，仍有页面失败",

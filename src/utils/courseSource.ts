@@ -15,13 +15,27 @@ export interface CourseSource {
   src: string
 }
 
+/** 后端产物文件名固定为 uuid4().hex + 扩展名 */
+const HTML_NAME_RE = /^[0-9a-f]{32}\.html$/i
+const MEDIA_NAME_RE = /^[0-9a-f]{32}\.(?:mp3|mp4)$/i
+
+/** 历史数据里的本地绝对路径 → 同源后端接口地址 */
+function artifactUrlFromLocalPath(path: string): string {
+  const name = path.replace(/\\/g, '/').split('/').pop() ?? ''
+  if (HTML_NAME_RE.test(name)) {
+    return `/api/generated/files/${encodeURIComponent(name)}/html`
+  }
+  if (MEDIA_NAME_RE.test(name)) {
+    return `/api/generated/files/${encodeURIComponent(name)}/media`
+  }
+  return ''
+}
+
 /**
- * 把后端返回的本地落盘路径转成浏览器可访问的 URL。
+ * 把后端返回的路径转成浏览器可访问的 URL。
  *
- * 后端返回的是 Windows 绝对路径（如 D:\...\server\outputs\videos\x.html），
- * 浏览器无法直接打开；开发环境用 Vite dev server 自带的 `/@fs/<绝对路径>`
- * 文件系统访问机制（同源，保证 iframe 的 contentDocument 可被读取）。
- * 注意：`/@fs/` 仅 dev 模式有效，生产构建需另行配置静态文件服务。
+ * 后端现在直接返回 `/api/generated/files/...` 同源地址，开发（Vite 代理）
+ * 和生产（Nginx 反代）都能用；这里只为历史数据中的本地绝对路径做兜底。
  */
 export function toFileUrl(path: string): string {
   const trimmed = path.trim()
@@ -31,7 +45,12 @@ export function toFileUrl(path: string): string {
   // Windows 的 file:// 协议（浏览器从 http 页面加载会被拦，这里仅剥掉前缀继续转换）
   const withoutScheme = trimmed.replace(/^file:\/\//i, '')
 
-  // 反斜杠归一化为正斜杠；Windows 盘符路径前面补 /
+  const artifactUrl = artifactUrlFromLocalPath(withoutScheme)
+  if (artifactUrl) return artifactUrl
+
+  // /@fs 只在 Vite dev server 存在；生产构建下宁可降级，也不产出必然 404 的地址
+  if (!import.meta.env.DEV) return ''
+
   const normalized = withoutScheme.replace(/\\/g, '/')
   const withRoot = /^[a-zA-Z]:\//.test(normalized) ? `/${normalized}` : normalized
   return `/@fs${withRoot}`

@@ -1,21 +1,32 @@
 """应用配置：支持从环境变量或 .env 文件读取。"""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 固定读取 server/.env，避免从仓库根目录启动时读不到配置
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     """全局配置项。字段名即环境变量名（不区分大小写）。"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8-sig",
         extra="ignore",
     )
 
     app_name: str = "MAIC API"
     debug: bool = False
+
+    # 监听地址与端口：默认 0.0.0.0 让容器/远程机器可被访问，本地开发也照常可用
+    host: str = "0.0.0.0"
+    port: int = 8001
+
+    # 课件数据库与产物根目录；留空时默认 server/outputs
+    maic_output_dir: str = ""
 
     # 所有业务接口统一前缀，便于前端统一代理
     api_prefix: str = "/api"

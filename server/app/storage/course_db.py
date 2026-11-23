@@ -12,13 +12,11 @@ import json
 import logging
 import sqlite3
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from app.core.paths import DB_PATH, artifact_url
 
-# 数据库文件：server/outputs/maic.db（outputs 是课件产物根目录）
-DB_PATH = Path(__file__).resolve().parents[2] / "outputs" / "maic.db"
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS courses (
@@ -83,6 +81,8 @@ def _row_to_course(row: sqlite3.Row) -> dict:
         "status": row["status"],
         "pageCount": int(row["page_count"] or 0),
         "htmlPath": row["html_path"],
+        # 浏览器可直接访问的同源地址；htmlPath 仍保留绝对路径供后端文件 IO
+        "htmlUrl": artifact_url(row["html_path"], "html"),
         "catalogList": _loads(row["catalog_json"], []),
         "pageList": _loads(row["page_json"], []),
         "audioList": _loads(row["audio_json"], []),

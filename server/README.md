@@ -73,6 +73,23 @@ python main.py
 .\.venv\Scripts\python.exe main.py
 ```
 
+## 生产启动
+
+1. 配置 `.env`：参考 `.env.example`，`DEBUG=false`，`CORS_ORIGINS` 填线上前端域名，
+   `MAIC_OUTPUT_DIR` 指向**持久化目录**（数据库与课件产物都在这里）。密钥建议由环境变量/密钥管理服务注入，
+   不要把 `.env` 提交仓库或打进镜像。
+2. 启动后端（需在 `server` 目录下，**单 worker**，不要加 `--reload`）：
+   - Windows：`powershell -File start_prod.ps1`
+   - Linux/macOS：`bash start_prod.sh`
+   
+   脚本使用 `--proxy-headers`；若 Nginx 与后端不在同一台机器，需设置 `FORWARDED_ALLOW_IPS` 为 Nginx 的 IP。
+3. 构建前端：在项目根目录执行 `npm ci && npm run build`，产物 `dist` 部署为静态站点。
+4. 配置反向代理：参考根目录 `deploy/nginx.conf.example`，把 `/api` 代理到 `127.0.0.1:8001`，
+   并关闭 SSE 缓冲。前端与后端必须同域，否则播放器无法读取课件 iframe 内部文档。
+
+> 会话、检查点与任务注册表都在进程内存里，当前**只能单 worker / 单实例**部署；需要水平扩展时，
+> 要先把这些状态迁到 Redis 或数据库。
+
 开发时若需要修改代码自动重启，可改用 uvicorn 命令（需在 `server` 目录下执行）：
 
 ```powershell

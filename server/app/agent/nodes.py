@@ -61,8 +61,8 @@ __all__ = [
 
 DEFAULT_GREETING = "你好，我是 MAIC 助手，可以为你讲解知识并生成配套音频与页面，想听点什么？"
 
-# 课件产物根目录：nodes.py 位于 server/app/agent/ 下，向上两级即 server/ 目录
-OUTPUT_DIR = Path(__file__).resolve().parents[2] / "outputs"
+# 课件产物根目录统一由 app.core.paths 管理（可用 MAIC_OUTPUT_DIR 覆盖）
+from app.core.paths import OUTPUT_DIR  # noqa: E402
 
 # ── 生成进度上报（供 SSE 流式接口 /api/chat/stream 使用）────────────────────
 # 用 ContextVar（上下文变量）保存回调：asyncio.gather 派出的并发子任务会继承

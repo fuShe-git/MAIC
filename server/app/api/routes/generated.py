@@ -14,15 +14,16 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+
+from app.core.paths import AUDIO_DIR, VIDEOS_DIR
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/generated", tags=["generated"])
 
-# 课件落盘目录：server/outputs/videos
-VIDEOS_DIR = Path(__file__).resolve().parents[3] / "outputs" / "videos"
 # 生成流程统一用 uuid4().hex + .html 命名，按此白名单校验可访问文件
 _FILE_NAME_RE = re.compile(r"^[0-9a-f]{32}\.html$")
+_MEDIA_NAME_RE = re.compile(r"^[0-9a-f]{32}\.(?:mp3|mp4)$")
 # 从 HTML 头部提取 <title>（课件标题在文件前几行）
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
@@ -87,3 +88,19 @@ async def get_generated_html(file_name: str):
         logger.warning("课件文件读取失败：%s", path, exc_info=True)
         raise HTTPException(status_code=500, detail="课件文件读取失败")
     return HTMLResponse(content)
+
+
+@router.get("/files/{file_name}/media")
+async def get_generated_media(file_name: str):
+    """返回生成的 mp3/mp4；文件名白名单 + 目录限定，避免任意文件读取。"""
+    if not _MEDIA_NAME_RE.match(file_name):
+        raise HTTPException(status_code=400, detail="非法的媒体文件名")
+
+    path = VIDEOS_DIR / file_name
+    if not await asyncio.to_thread(path.is_file):
+        path = AUDIO_DIR / file_name
+        if not await asyncio.to_thread(path.is_file):
+            raise HTTPException(status_code=404, detail="媒体文件不存在")
+
+    media_type = "video/mp4" if path.suffix.lower() == ".mp4" else "audio/mpeg"
+    return FileResponse(path, media_type=media_type)

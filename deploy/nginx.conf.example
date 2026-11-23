@@ -1,0 +1,37 @@
+# 生产反向代理示例：前端静态产物 + /api 转发到 FastAPI
+# 前端与后端同域是关键：播放器要读 iframe.contentDocument（同源策略）。
+# 使用方法：复制为 nginx.conf，按需修改 root / server_name / upstream 地址。
+
+upstream maic_backend {
+    server 127.0.0.1:8001;
+}
+
+server {
+    listen 80;
+    server_name your-domain.com;
+    # 前端执行 npm run build 后的 dist 目录
+    root /var/www/maic/dist;
+    index index.html;
+
+    client_max_body_size 10m;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 所有 API（含 SSE 流式生成）走这里；不要改成独立域名，否则课件 iframe 跨域
+    location /api/ {
+        proxy_pass http://maic_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE（Server-Sent Events，服务端单向流式推送）必须关闭缓冲
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+}

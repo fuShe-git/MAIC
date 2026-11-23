@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# 环境变量与密钥：只保留模板，真实 .env 一律不入库
+.env
+.env.*
+!.env.example
+
 # Server resource files
 /server/resource/
 
