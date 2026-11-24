@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 
-from app.storage import course_db
+from app.storage import course_db, folder_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/courses", tags=["courses"])
@@ -48,6 +48,9 @@ async def delete_course(course_id: str):
             await asyncio.to_thread(Path(html_path).unlink, missing_ok=True)
         except Exception:
             logger.warning("课件文件删除失败：%s", html_path, exc_info=True)
+
+    # 同步清掉文件夹归属，避免分组里残留已删除的课件
+    await asyncio.to_thread(folder_db.remove_course, course_id)
 
     return {"deleted": bool(removed), "id": course_id}
 

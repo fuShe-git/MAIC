@@ -1,13 +1,38 @@
+/* ---------- 主题变量：深色为默认，<html data-theme="light"> 覆盖 ---------- */
+
 :root {
   --bg: #07070c;
   --text: #e8e6f5;
   --text-dim: #8b8b9e;
+  --text-faint: #6d6d80;
   --accent: #8b7bff;
   --accent-2: #35d6c6;
   --dp-width: 300px;
 
-  --sans: system-ui, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei',
-    sans-serif;
+  /* 表面与描边 */
+  --surface: rgba(20, 20, 29, 0.88);
+  --surface-2: rgba(25, 25, 35, 0.92);
+  --surface-hover: rgba(30, 28, 46, 0.92);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --overlay: rgba(4, 4, 12, 0.62);
+
+  /* 右上角工具栏 / 浮层 */
+  --chrome-bg: rgba(26, 26, 38, 0.86);
+  --chrome-hover: rgba(255, 255, 255, 0.08);
+  --popover-bg: rgba(28, 28, 42, 0.98);
+  --settings-nav-bg: rgba(0, 0, 0, 0.22);
+
+  /* 首页大面积色 */
+  --page-bg:
+    radial-gradient(110% 55% at 50% -12%, rgba(120, 96, 255, 0.22), transparent 62%),
+    radial-gradient(70% 35% at 50% -6%, rgba(53, 214, 198, 0.06), transparent 70%), #07070c;
+  --composer-bg: linear-gradient(180deg, rgba(25, 25, 35, 0.92), rgba(17, 17, 25, 0.94));
+  --brand-gradient: linear-gradient(100deg, #8b7bff 0%, #b6adff 46%, #f4f2ff 100%);
+  --shadow-lg: 0 26px 60px -32px rgba(0, 0, 0, 0.95);
+  --shadow-pop: 0 22px 48px -18px rgba(0, 0, 0, 0.8);
+
+  --sans: system-ui, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 
   font: 14px/1.5 var(--sans);
   color-scheme: dark;
@@ -17,6 +42,35 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+html[data-theme='light'] {
+  --bg: #f5f4f9;
+  --text: #1e1f29;
+  --text-dim: #63647a;
+  --text-faint: #8a8b9e;
+
+  --surface: rgba(255, 255, 255, 0.94);
+  --surface-2: #ffffff;
+  --surface-hover: #f3f2fb;
+  --border: rgba(28, 26, 58, 0.1);
+  --border-strong: rgba(28, 26, 58, 0.18);
+  --overlay: rgba(22, 20, 40, 0.32);
+
+  --chrome-bg: rgba(255, 255, 255, 0.9);
+  --chrome-hover: rgba(28, 26, 58, 0.06);
+  --popover-bg: #ffffff;
+  --settings-nav-bg: #f7f6fb;
+
+  --page-bg:
+    radial-gradient(110% 55% at 50% -12%, rgba(120, 96, 255, 0.16), transparent 62%),
+    radial-gradient(70% 35% at 50% -6%, rgba(53, 214, 198, 0.1), transparent 70%), #f5f4f9;
+  --composer-bg: linear-gradient(180deg, #ffffff, #fbfaff);
+  --brand-gradient: linear-gradient(100deg, #5b45e0 0%, #7259e8 46%, #1e1f29 100%);
+  --shadow-lg: 0 26px 60px -34px rgba(40, 32, 90, 0.4);
+  --shadow-pop: 0 22px 48px -18px rgba(40, 32, 90, 0.28);
+
+  color-scheme: light;
 }
 
 * {
@@ -32,6 +86,10 @@ body,
 body {
   margin: 0;
   background: var(--bg);
+  color: var(--text);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
 #root {

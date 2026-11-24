@@ -31,6 +31,13 @@ CREATE TABLE IF NOT EXISTS courses (
     audio_json   TEXT NOT NULL DEFAULT '',
     quiz_json    TEXT NOT NULL DEFAULT ''
 );
+
+-- 课件备注名：按文件 id 存用户自定义名称，和课件记录解耦
+-- （列表是按文件扫描出来的，历史文件可能没有 courses 记录）
+CREATE TABLE IF NOT EXISTS course_remarks (
+    id     TEXT PRIMARY KEY,
+    remark TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -186,15 +193,48 @@ def get_course(course_id: str) -> Optional[dict]:
 
 
 def delete_course(course_id: str) -> bool:
-    """删除一条课件记录；返回是否真的删掉了。"""
+    """删除一条课件记录（连同备注名）；返回是否真的删掉了。"""
     try:
         with _open() as conn:
             cursor = conn.execute("DELETE FROM courses WHERE id = ?", (course_id,))
             removed = cursor.rowcount > 0
+            # 备注名与课件同生共死，避免残留脏数据
+            conn.execute("DELETE FROM course_remarks WHERE id = ?", (course_id,))
         return removed
     except Exception:
         logger.warning("课件删除失败：%s", course_id, exc_info=True)
         return False
+
+
+def set_remark(course_id: str, remark: str) -> bool:
+    """写入课件备注名；空串表示清除备注（列表回退课件自带标题）。"""
+    try:
+        with _open() as conn:
+            if remark:
+                conn.execute(
+                    """
+                    INSERT INTO course_remarks (id, remark) VALUES (?, ?)
+                    ON CONFLICT(id) DO UPDATE SET remark=excluded.remark
+                    """,
+                    (course_id, remark),
+                )
+            else:
+                conn.execute("DELETE FROM course_remarks WHERE id = ?", (course_id,))
+        return True
+    except Exception:
+        logger.warning("课件备注写入失败：%s", course_id, exc_info=True)
+        return False
+
+
+def get_remarks() -> dict:
+    """全部备注名（课件 id → 备注），供列表接口一次性合并。"""
+    try:
+        with _open() as conn:
+            rows = conn.execute("SELECT id, remark FROM course_remarks").fetchall()
+        return {row["id"]: row["remark"] for row in rows if row["remark"]}
+    except Exception:
+        logger.warning("课件备注读取失败", exc_info=True)
+        return {}
 
 
 def update_status(course_id: str, status: str) -> bool:

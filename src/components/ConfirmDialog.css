@@ -1,0 +1,118 @@
+/* 二次确认弹窗：居中浮层卡片 + 取消/确认胶囊按钮
+   注意：类名统一 confirm-modal 前缀，避免与 ConfirmView 的 .confirm-* 冲突 */
+.confirm-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(5, 5, 12, 0.55);
+  backdrop-filter: blur(6px);
+  animation: confirm-modal-mask-in 0.16s ease both;
+}
+
+@keyframes confirm-modal-mask-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.confirm-modal {
+  width: min(320px, 100%);
+  padding: 26px 24px 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--surface-2);
+  text-align: center;
+  box-shadow: 0 32px 80px -28px rgba(0, 0, 0, 0.8);
+  animation: confirm-modal-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes confirm-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.confirm-modal-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.confirm-modal-desc {
+  margin: 10px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.confirm-modal-error {
+  margin: 10px 0 0;
+  color: #ff7a7a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.confirm-modal-btn {
+  min-width: 92px;
+  height: 36px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  font: 13px/1.4 var(--sans);
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.confirm-modal-btn.is-ghost {
+  background: var(--chrome-hover);
+  color: var(--text-dim);
+}
+
+.confirm-modal-btn.is-ghost:hover:not(:disabled) {
+  background: var(--chrome-hover);
+  color: var(--text);
+}
+
+.confirm-modal-btn.is-primary {
+  background: linear-gradient(100deg, #6f5cff, #8b7bff);
+  color: #fff;
+}
+
+.confirm-modal-btn.is-danger {
+  background: #e5484d;
+  color: #fff;
+}
+
+.confirm-modal-btn.is-danger:hover:not(:disabled) {
+  background: #f0565b;
+}
+
+.confirm-modal-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

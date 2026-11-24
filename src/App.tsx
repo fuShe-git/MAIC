@@ -6,20 +6,15 @@ import { generatedHtmlUrl, listGeneratedFiles } from './api/generated'
 import type { GeneratedCourse } from './api/generated'
 import { toPageItems } from './utils/courseContext'
 import ConfirmView from './components/ConfirmView'
-import CourseList from './components/CourseList'
 import LecturePlayer from './components/LecturePlayer'
 import GeneratingView from './components/GeneratingView'
 import type { WaitStatus } from './components/GeneratingView'
+import HistorySection from './components/HistorySection'
+import SettingsModal from './components/SettingsModal'
+import TopBar from './components/TopBar'
+import { useI18n } from './i18n/context'
+import { EXAMPLES } from './i18n/messages'
 import './App.css'
-
-const EXAMPLES = [
-  '从零学 Python，30 分钟写出第一个程序',
-  '用正弦函数讲讲傅里叶变换',
-  '阿瓦隆桌游怎么玩',
-]
-
-const PLACEHOLDER = `输入你想学的任何内容，例如：
-${EXAMPLES.map((item) => `[${item}]`).join('\n')}`
 
 /** 等待页的进度状态快照 */
 interface WaitState {
@@ -51,9 +46,12 @@ const INITIAL_WAIT: WaitState = {
 }
 
 function App() {
+  const { t, lang } = useI18n()
   const [prompt, setPrompt] = useState('')
-  // 视图五态：home 首页 → waiting 等待页 → confirm 确认大纲 → player 课件页；courses 课件库
-  const [view, setView] = useState<'home' | 'waiting' | 'confirm' | 'player' | 'courses'>('home')
+  // 设置弹窗开关（首页右上角齿轮入口）
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  // 视图四态：home 首页 → waiting 等待页 → confirm 确认大纲 → player 课件页
+  const [view, setView] = useState<'home' | 'waiting' | 'confirm' | 'player'>('home')
   const [busy, setBusy] = useState(false)
   const [wait, setWait] = useState<WaitState>(INITIAL_WAIT)
   const [lecture, setLecture] = useState<ChatResponse | null>(null)
@@ -395,7 +393,8 @@ function App() {
     setLecture({
       reply: '',
       needLecture: true,
-      topic: course.topic,
+      // 用户改过备注名时，播放器标题与卡片保持一致
+      topic: course.remark || course.topic,
       courseHtml: generatedHtmlUrl(course.fileName),
       videoUrl: '',
       pageList: [],
@@ -404,12 +403,29 @@ function App() {
     setView('player')
   }
 
+  /** 「我的课堂」删除课件成功后，把该条从首页列表里摘掉 */
+  function handleRemoveGenerated(courseId: string) {
+    setGenerated((prev) => prev.filter((item) => item.id !== courseId))
+  }
+
+  /** 「我的课堂」改名成功后，同步列表里的备注名（接口已落库） */
+  function handleRenameGenerated(courseId: string, remark: string) {
+    setGenerated((prev) =>
+      prev.map((item) => (item.id === courseId ? { ...item, remark } : item)),
+    )
+  }
+
   /** 播放页「返回」：回首页 */
   function handleBackFromPlayer() {
     setLecture(null)
     setWait(INITIAL_WAIT)
     setView('home')
   }
+
+  // 输入框占位：提示语 + 当前语种的示例
+  const placeholder = `${t('composer.placeholderPrefix')}\n${EXAMPLES[lang]
+    .map((item) => `[${item}]`)
+    .join('\n')}`
 
   if (view === 'confirm') {
     return (
@@ -420,10 +436,6 @@ function App() {
         busy={busy}
       />
     )
-  }
-
-  if (view === 'courses') {
-    return <CourseList onBack={() => setView('home')} />
   }
 
   if (view === 'player' && lecture) {
@@ -463,29 +475,28 @@ function App() {
 
   return (
     <div className="page">
+      <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+
       <header className="brand">
         <div className="brand-row">
           <img className="brand-icon" src="/img/bitbug_favicon.ico" alt="MAIC" />
           <h1 className="brand-name">MAIC</h1>
-          <button className="btn-courses" type="button" onClick={() => setView('courses')}>
-            我的课件
-          </button>
         </div>
       </header>
 
       <main className="composer">
         <div className="composer-head">
-          <span className="composer-tip">准备好一起学习了吗?</span>
+          <span className="composer-tip">{t('composer.ready')}</span>
         </div>
 
         <label className="sr-only" htmlFor="composer-input">
-          输入你想学的任何内容
+          {t('composer.placeholderPrefix')}
         </label>
         <textarea
           id="composer-input"
           className="composer-input"
           value={prompt}
-          placeholder={PLACEHOLDER}
+          placeholder={placeholder}
           onChange={(event) => setPrompt(event.target.value)}
         />
 
@@ -505,48 +516,20 @@ function App() {
                 strokeLinejoin="round"
               />
             </svg>
-            <span>{busy ? '生成中…' : '进入课堂'}</span>
+            <span>{busy ? t('composer.generating') : t('composer.enter')}</span>
           </button>
         </div>
       </main>
 
-      <section className="history">
-        <div className="history-head">
-          <span className="history-title">生成记录</span>
-          {generated.length > 0 ? <span className="history-count">共 {generated.length} 份</span> : null}
-        </div>
-        {!generatedLoaded ? (
-          <div className="history-empty">加载中…</div>
-        ) : generated.length === 0 ? (
-          <div className="history-empty">暂无生成记录</div>
-        ) : (
-          <div className="history-list">
-            {generated.map((course) => (
-              <button
-                className="history-card"
-                key={course.id}
-                type="button"
-                onClick={() => handleOpenGenerated(course)}
-              >
-                <span className="history-cover" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M8 6.5v11l9-5.5-9-5.5Z"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </span>
-                <span className="history-info">
-                  <span className="history-name">{course.topic}</span>
-                  <span className="history-meta">已生成 · 点击继续学习</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+      <HistorySection
+        items={generated}
+        loaded={generatedLoaded}
+        onOpen={handleOpenGenerated}
+        onRemove={handleRemoveGenerated}
+        onRename={handleRenameGenerated}
+      />
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   )
 }
