@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type { PageItem } from '../api/chat'
 import { discussionStream } from '../api/discussion'
 import type {
@@ -18,6 +18,10 @@ export interface DiscussionPanelProps {
   pageLabel: string
   open: boolean
   onToggle: () => void
+  /** 当前面板宽度，由播放器统一管理 */
+  width: number
+  /** 拖动左边缘调整面板宽度 */
+  onWidthChange: (width: number) => void
   /** 输入框聚焦时通知播放器暂停讲解 */
   onFocusInput?: () => void
 }
@@ -27,6 +31,9 @@ const SOURCE_TEXT: Record<DiscussionSource, string> = {
   web: '网络资料',
   mixed: '课件 + 网络',
 }
+
+const MIN_WIDTH = 260
+const MAX_WIDTH = 480
 
 const newId = () =>
   `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -38,6 +45,8 @@ export default function DiscussionPanel({
   pageLabel,
   open,
   onToggle,
+  width,
+  onWidthChange,
   onFocusInput,
 }: DiscussionPanelProps) {
   const [messages, setMessages] = useState<DiscussionMessage[]>([])
@@ -52,6 +61,7 @@ export default function DiscussionPanel({
   const firstQuestionRef = useRef(true)
   const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const widthDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
   useEffect(() => () => abortRef.current?.abort(), [])
 
@@ -219,6 +229,27 @@ export default function DiscussionPanel({
     }
   }
 
+  function handleWidthPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    widthDragRef.current = { startX: event.clientX, startWidth: width }
+  }
+
+  function handleWidthPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = widthDragRef.current
+    if (!drag) return
+    // 向左拖动增大面板宽度，向右拖动缩小
+    const next = drag.startWidth + (drag.startX - event.clientX)
+    onWidthChange(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(next))))
+  }
+
+  function handleWidthPointerEnd(event: ReactPointerEvent<HTMLDivElement>) {
+    widthDragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
     event.preventDefault()
@@ -230,6 +261,17 @@ export default function DiscussionPanel({
 
   return (
     <aside className={`dp-panel${open ? ' is-open' : ''}`} aria-hidden={!open}>
+      <div
+        className="dp-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖动调整对话栏宽度"
+        title="拖动调整宽度"
+        onPointerDown={handleWidthPointerDown}
+        onPointerMove={handleWidthPointerMove}
+        onPointerUp={handleWidthPointerEnd}
+        onPointerCancel={handleWidthPointerEnd}
+      />
       <div className="dp-tabbar">
         <span className="dp-tab is-active">对话</span>
         <div className="dp-tab-actions">

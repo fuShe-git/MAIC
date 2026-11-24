@@ -69,6 +69,25 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   var timerEnd = 0;     // 计时器计划触发的时间戳，暂停时用它算剩余停留
   var remaining = 0;    // 无音频页暂停后剩余的停留毫秒
   var playing = false;
+  var autoPlay = true;  // 关闭后本页讲完即停，不再翻页
+  var rate = 1;
+  var volume = 1;
+
+  function clamp(value, min, max) {
+    var n = parseFloat(value);
+    return isFinite(n) ? Math.min(max, Math.max(min, n)) : min;
+  }
+
+  function applyAudioSettings() {
+    player.playbackRate = rate;
+    player.volume = volume;
+  }
+
+  // 自动翻页入口：音频播完与无音频页定时结束都走这里
+  function advance() {
+    if (!autoPlay) { stop(); return; }
+    play(idx + 1);
+  }
 
   function render() {
     pages.forEach(function (p, i) { p.classList.toggle('active', i === idx); });
@@ -85,7 +104,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
 
   function schedule(ms) {
     timerEnd = Date.now() + ms;
-    timer = setTimeout(function () { play(idx + 1); }, ms);
+    timer = setTimeout(advance, ms);
   }
 
   // 从第 i 页开头完整播放（切页、自动翻页、重新播放都走这里）
@@ -106,6 +125,7 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
     var audio = pages[i].getAttribute('data-audio');
     if (audio) {
       player.src = audio;
+      applyAudioSettings();
       loadedInd = i;
       player.play().catch(function () {});
     } else {
@@ -143,13 +163,20 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
     syncBtn();
   }
 
-  player.addEventListener('ended', function () { play(idx + 1); });
+  player.addEventListener('ended', advance);
   startBtn.addEventListener('click', function () { toggle(); });
   prevBtn.addEventListener('click', function () { play(idx - 1); });
   nextBtn.addEventListener('click', function () { play(idx + 1); });
 
   render();
   syncBtn();
+
+  // 父页面通过同源 iframe 调用，统一控制自动播放 / 倍速 / 音量
+  window.__coursePlayer = {
+    setAutoPlay: function (value) { autoPlay = !!value; },
+    setRate: function (value) { rate = clamp(value || 1, 0.25, 4); applyAudioSettings(); },
+    setVolume: function (value) { volume = clamp(value || 0, 0, 1); applyAudioSettings(); }
+  };
 
   // 重新观看：从第一页重播（前端底部「重新观看」按钮派发该事件）
   document.addEventListener('course:rewatch', function () { play(0); });

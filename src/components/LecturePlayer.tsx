@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import type { PageItem } from '../api/chat'
+import { parsePageNumber } from '../utils/courseContext'
 import { pickCourseSource } from '../utils/courseSource'
 import type { CourseSourceKind } from '../utils/courseSource'
+import { useAutoHideControls } from '../hooks/useAutoHideControls'
+import { useFullscreen, usePlaybackSettings } from '../hooks/usePlaybackSettings'
 import DiscussionPanel from './DiscussionPanel'
 import LectureControls from './LectureControls'
+import type { LectureControlsProps } from './LectureControls'
+import LectureTranscript from './LectureTranscript'
 import './LecturePlayer.css'
 
 export interface LecturePlayerProps {
@@ -27,6 +33,14 @@ export interface LecturePlayerProps {
 const LOAD_TIMEOUT_MS = 15_000
 /** 轮询课件内部页码 / 播放态的间隔 */
 const POLL_MS = 400
+/** 讲解词面板默认高度 */
+const LOWER_DEFAULT_HEIGHT = 240
+/**
+ * 课件画布基准尺寸（16:9）。课件舞台为 min(94vw, 1100px)，
+ * 用 1170×658 作 iframe 视口时舞台刚好取到 1100 的原始版式。
+ */
+const CANVAS_WIDTH = 1170
+const CANVAS_HEIGHT = 658
 
 export default function LecturePlayer({
   topic,
@@ -51,6 +65,9 @@ export default function LecturePlayer({
   const [videoTime, setVideoTime] = useState(0)
   const [videoDuration, setVideoDuration] = useState(0)
   const [videoPlaying, setVideoPlaying] = useState(false)
+  const [lowerCollapsed, setLowerCollapsed] = useState(false)
+  const [lowerHeight, setLowerHeight] = useState(LOWER_DEFAULT_HEIGHT)
+  const [discussionWidth, setDiscussionWidth] = useState(300)
 
   // 展开讨论时锁住页面滚动，只保留消息列表内部滚动，避免整页出现滚动条
   useEffect(() => {
@@ -62,13 +79,96 @@ export default function LecturePlayer({
     }
   }, [discussionOpen])
 
+  const rootRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
+  const frameWrapRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const lastPageRef = useRef('')
+  const manualNavRef = useRef(false)
+  const [canvasScale, setCanvasScale] = useState(1)
+
+  // 讲解词面板高度由 DOM 变量驱动：拖动过程中直接修改，避免 React 重渲染覆盖临时高度；
+  // 这里只在折叠状态切换时同步，拖动提交的高度已由面板自己写回 DOM
+  const lowerHeightRef = useRef(lowerHeight)
+  lowerHeightRef.current = lowerHeight
+
+  useLayoutEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    root.style.setProperty('--lp-lower-h', `${lowerCollapsed ? 0 : lowerHeightRef.current}px`)
+  }, [lowerCollapsed])
+
+  /**
+   * 课件舞台是 `width: min(94vw, 1100px)` 的 16:9 版式，页内排版（字号、`100vh`
+   * 宽度计算）都基于这个视口。前端容器通常比它窄，若直接把 iframe 缩成容器大小，
+   * 课件会按窄视口重排 → 内容挤压、溢出、比例错乱。
+   * 因此给 iframe 一个固定画布（1170×658 ≈ 1100/0.94 的 16:9），等价于「在大窗口里
+   * 直接打开课件」，再把整块画布等比缩放到容器；全屏时由 CSS 还原为铺满。
+   * 全程不进课件内部改布局，页内样式保持原样。
+   */
+  useLayoutEffect(() => {
+    const wrap = frameWrapRef.current
+    if (!wrap) return
+    const measure = () => {
+      const { width, height } = wrap.getBoundingClientRect()
+      if (!width || !height) return
+      setCanvasScale(Math.min(width / CANVAS_WIDTH, height / CANVAS_HEIGHT))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(wrap)
+    return () => observer.disconnect()
+  }, [])
 
   const source = useMemo(
     () => pickCourseSource({ courseHtml, videoUrl, pageList }, failed),
     [courseHtml, videoUrl, pageList, failed],
   )
+
+  const {
+    autoPlay,
+    toggleAutoPlay,
+    rate,
+    setRate,
+    volume,
+    setVolume,
+    apiAvailableRef,
+  } = usePlaybackSettings(frameRef, videoRef, frameReady, source.kind)
+  const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(frameWrapRef)
+  // 全屏浮层控制条：静止一段时间自动隐藏，鼠标移动/按键/触摸重新出现
+  const fsControls = useAutoHideControls(isFullscreen)
+
+  // 课件 body 是从顶部起排的，全屏放大后舞台会贴顶偏上；这里让它垂直居中
+  useEffect(() => {
+    const body = frameRef.current?.contentDocument?.body
+    if (!body) return
+    body.style.justifyContent = isFullscreen ? 'center' : ''
+  }, [isFullscreen, frameReady])
+
+  /**
+   * 课件（及逐页兜底）都装在 iframe 里，指针进入 iframe 后 mousemove 只在子文档触发、
+   * 不会冒泡到父文档，所以父文档和同源子文档都要监听；跨域拿不到文档时只监听父文档。
+   */
+  useEffect(() => {
+    if (!isFullscreen) return
+    const { poke } = fsControls
+    const frameDocs = Array.from(frameWrapRef.current?.querySelectorAll('iframe') ?? [])
+      .map((frame) => frame.contentDocument)
+      .filter((doc): doc is Document => Boolean(doc))
+    const targets: Document[] = [document, ...frameDocs]
+    targets.forEach((doc) => {
+      doc.addEventListener('mousemove', poke)
+      doc.addEventListener('pointerdown', poke)
+    })
+    document.addEventListener('keydown', poke)
+    return () => {
+      targets.forEach((doc) => {
+        doc.removeEventListener('mousemove', poke)
+        doc.removeEventListener('pointerdown', poke)
+      })
+      document.removeEventListener('keydown', poke)
+    }
+  }, [isFullscreen, fsControls.poke, frameReady, source.kind, source.src, pageIndex])
 
   const usablePages = useMemo(
     () => pageList.filter((page) => page.htmlpage.trim()),
@@ -86,6 +186,7 @@ export default function LecturePlayer({
     setPlaying(false)
     setPageIndex(0)
     setQuizMode(false)
+    lastPageRef.current = ''
   }, [source.kind, source.src])
 
   // 课件 HTML 长时间未加载成功 → 判定失败并降级
@@ -100,12 +201,31 @@ export default function LecturePlayer({
     const doc = frameRef.current?.contentDocument
     if (!doc) return
     const num = doc.getElementById('pageNum')?.textContent?.trim()
-    if (num) setPageLabel(num)
+    if (num) {
+      // 旧课件无控制接口：自动播放关闭时把未经手动触发的翻页回退
+      if (
+        !autoPlay &&
+        !apiAvailableRef.current &&
+        !manualNavRef.current &&
+        lastPageRef.current &&
+        num !== lastPageRef.current
+      ) {
+        manualNavRef.current = true
+        doc.getElementById('prev')?.click()
+        const start = doc.getElementById('start')
+        if (start?.textContent?.trim() === '暂停') start.click()
+        window.setTimeout(() => {
+          manualNavRef.current = false
+        }, 0)
+      }
+      lastPageRef.current = num
+      setPageLabel(num)
+    }
     const start = doc.getElementById('start')?.textContent?.trim()
     if (start) setPlaying(start === '暂停')
     // 课件脚本在进入练习时给 body 打标记，前端据此切换底部控制区
     setQuizMode(doc.body.classList.contains('quiz-mode'))
-  }, [])
+  }, [autoPlay, apiAvailableRef])
 
   // 课件就绪后轮询内部状态（卸载即清理，防止内存泄漏）
   useEffect(() => {
@@ -137,8 +257,12 @@ export default function LecturePlayer({
         markFailed('html')
         return
       }
+      manualNavRef.current = true
       doc.getElementById(id)?.click()
-      window.setTimeout(syncFromFrame, 0)
+      window.setTimeout(() => {
+        syncFromFrame()
+        manualNavRef.current = false
+      }, 0)
     },
     [markFailed, syncFromFrame],
   )
@@ -181,14 +305,73 @@ export default function LecturePlayer({
   const atFirst = Number.isFinite(cur) ? cur <= 1 : true
   const atLast = Number.isFinite(cur) && Number.isFinite(total) ? cur >= total : false
   const pageTotal = usablePages.length
-  // 逐页兜底模式下页码由前端控制，讨论区也跟着当前页走
-  const discussionPageLabel =
+  // 逐页兜底模式下页码由前端控制，讨论区与讲解词也跟着当前页走
+  const activePageLabel =
     source.kind === 'pages' ? `${pageIndex + 1} / ${pageTotal || 1}` : pageLabel
+  const transcript = useMemo(() => {
+    const current = parsePageNumber(activePageLabel)
+    if (!current) return ''
+    const page = pageList.find((item) => Number(item.ind) === current) ?? pageList[current - 1]
+    // context 由后端按「标题：口播稿」逐行拼接，下方只展示冒号后的正文
+    return (page?.context ?? '')
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const colon = line.indexOf('：')
+        return colon >= 0 ? line.slice(colon + 1).trim() : line.trim()
+      })
+      .filter(Boolean)
+      .join('\n')
+  }, [activePageLabel, pageList])
   const showLoadMask = source.kind === 'html' && !frameReady
   const allFailed = source.kind === 'none' && failed.length > 0
 
+  // 控制条：面板展开时作为讲解词区域的头部，折叠时单独作为底部栏
+  const controlProps: LectureControlsProps = {
+    kind: source.kind,
+    pageLabel: activePageLabel,
+    playing,
+    atFirst,
+    atLast,
+    pageIndex,
+    pageTotal,
+    videoTime,
+    videoDuration,
+    videoPlaying,
+    quizMode,
+    onRewatch: handleRewatch,
+    discussionOpen,
+    onToggleDiscussion: () => setDiscussionOpen((value) => !value),
+    autoPlay,
+    onToggleAutoPlay: toggleAutoPlay,
+    rate,
+    onRateChange: setRate,
+    volume,
+    onVolumeChange: setVolume,
+    isFullscreen,
+    onToggleFullscreen: toggleFullscreen,
+    lowerCollapsed,
+    onToggleLower: () => setLowerCollapsed((value) => !value),
+    audioEnabled: source.kind === 'html' || source.kind === 'video',
+    onPrev: () => clickInside('prev'),
+    onToggle: () => (source.kind === 'video' ? toggleVideo() : clickInside('start')),
+    onNext: () => clickInside('next'),
+    onPageIndexChange: setPageIndex,
+    onSeek: (time: number) => {
+      const video = videoRef.current
+      if (!video) return
+      video.currentTime = time
+      setVideoTime(time)
+    },
+  }
+  const controls = <LectureControls {...controlProps} />
+
   return (
-    <div className={`lp${discussionOpen ? ' has-discussion' : ''}`}>
+    <div
+      ref={rootRef}
+      className={`lp${discussionOpen ? ' has-discussion' : ''}${lowerCollapsed ? ' is-lower-collapsed' : ''}`}
+      style={{ '--dp-width': `${discussionWidth}px` } as CSSProperties}
+    >
       <header className="lp-top">
         <button className="lp-back" type="button" onClick={onBack} aria-label="返回主页面">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -205,33 +388,21 @@ export default function LecturePlayer({
           <span className="lp-kicker">课件播放</span>
           <h1 className="lp-title">{topic || '课堂讲解'}</h1>
         </div>
-        {!discussionOpen && (
-          <button
-            className="lp-discuss-toggle is-collapsed"
-            type="button"
-            onClick={() => setDiscussionOpen(true)}
-            aria-label="展开对话"
-            title="展开对话"
-          >
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <rect
-                x="3"
-                y="4"
-                width="18"
-                height="16"
-                rx="2"
-                stroke="currentColor"
-                strokeWidth="1.6"
-              />
-              <path d="M15 4v16" stroke="currentColor" strokeWidth="1.6" />
-            </svg>
-          </button>
-        )}
       </header>
 
       <main className={`lp-stage${discussionOpen ? ' has-discussion' : ''}`}>
         <div className="lp-stage-main">
-        <div className="lp-frame">
+          <div
+            className="lp-frame"
+            ref={frameWrapRef}
+            style={
+              {
+                '--lp-canvas-w': `${CANVAS_WIDTH}px`,
+                '--lp-canvas-h': `${CANVAS_HEIGHT}px`,
+                '--lp-canvas-scale': canvasScale,
+              } as CSSProperties
+            }
+          >
           {source.kind === 'html' && (
             <iframe
               ref={frameRef}
@@ -292,6 +463,17 @@ export default function LecturePlayer({
               <span>课件加载中…</span>
             </div>
           )}
+
+          {/* 全屏时底部控制条不可见，这里浮出同样的倍速/音量/翻页按钮 */}
+          {isFullscreen && (
+            <div
+              className={`lp-fs-overlay${fsControls.visible ? '' : ' is-hidden'}`}
+              onMouseEnter={fsControls.hold}
+              onMouseLeave={fsControls.release}
+            >
+              <LectureControls {...controlProps} variant="overlay" />
+            </div>
+          )}
         </div>
 
         {failed.length > 0 && source.kind !== 'none' && (
@@ -305,43 +487,30 @@ export default function LecturePlayer({
           topic={topic}
           courseId={courseId}
           pageList={pageList}
-          pageLabel={discussionPageLabel}
+          pageLabel={activePageLabel}
           open={discussionOpen}
           onToggle={() => setDiscussionOpen(false)}
           onFocusInput={pauseCourseware}
+          width={discussionWidth}
+          onWidthChange={setDiscussionWidth}
         />
       </main>
 
-      <footer className="lp-bar">
-        {quizMode ? (
-          <button className="lp-ctrl is-primary" type="button" onClick={handleRewatch}>
-            重新观看
-          </button>
-        ) : (
-          <LectureControls
-            kind={source.kind}
-            pageLabel={pageLabel}
-            playing={playing}
-            atFirst={atFirst}
-            atLast={atLast}
-            pageIndex={pageIndex}
-            pageTotal={pageTotal}
-            videoTime={videoTime}
-            videoDuration={videoDuration}
-            videoPlaying={videoPlaying}
-            onPrev={() => clickInside('prev')}
-            onToggle={() => (source.kind === 'video' ? toggleVideo() : clickInside('start'))}
-            onNext={() => clickInside('next')}
-            onPageIndexChange={setPageIndex}
-            onSeek={(time) => {
-              const video = videoRef.current
-              if (!video) return
-              video.currentTime = time
-              setVideoTime(time)
-            }}
-          />
-        )}
-      </footer>
+      <div className="lp-bottom">
+        <LectureTranscript
+          text={transcript}
+          rootRef={rootRef}
+          height={lowerHeight}
+          onHeightCommit={setLowerHeight}
+          onCollapse={() => setLowerCollapsed(true)}
+          onExpand={(nextHeight) => {
+            setLowerCollapsed(false)
+            setLowerHeight(nextHeight)
+          }}
+          collapsed={lowerCollapsed}
+          toolbar={controls}
+        />
+      </div>
     </div>
   )
 }

@@ -30,6 +30,24 @@
   }
 }
 
+/* 左边缘拖动条：调整面板宽度，联动挤压课件与底部区域 */
+
+.dp-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  width: 10px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+/* 视觉把手默认隐藏，仅保留左边缘可拖动区域（鼠标经过显示左右箭头） */
+.dp-resize-handle::after {
+  display: none;
+}
+
 /* 顶部标签栏：只有「对话」，右侧为清空与折叠 */
 
 .dp-tabbar {
@@ -467,6 +485,14 @@
 
   .lp.has-discussion .lp-top {
     padding-right: 22px;
+  }
+
+  .lp.has-discussion .lp-bottom {
+    margin-right: 0;
+  }
+
+  .dp-resize-handle {
+    display: none;
   }
 
   .dp-panel.is-open {
