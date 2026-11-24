@@ -3,9 +3,11 @@ import type { ReactNode } from 'react'
 import { useI18n } from '../i18n/context'
 import { useTheme } from '../theme/context'
 import type { ThemeMode } from '../theme/context'
+import EmbeddingSettings from './EmbeddingSettings'
+import LlmSettings from './LlmSettings'
 import './SettingsModal.css'
 
-type SectionKey = 'theme' | 'llm' | 'embedding' | 'render' | 'vision' | 'mcp'
+type SectionKey = 'theme' | 'llm' | 'embedding'
 
 /** 左侧导航图标（线性风格，随文字颜色变化） */
 const SECTION_ICONS: Record<SectionKey, ReactNode> = {
@@ -38,40 +40,6 @@ const SECTION_ICONS: Record<SectionKey, ReactNode> = {
       <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
       <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
       <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
-    </svg>
-  ),
-  render: (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M4 7h11m3 0h2M4 17h5m3 0h8"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <circle cx="16.5" cy="7" r="2.1" stroke="currentColor" strokeWidth="1.6" />
-      <circle cx="10.5" cy="17" r="2.1" stroke="currentColor" strokeWidth="1.6" />
-    </svg>
-  ),
-  vision: (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M2.8 12S6.4 6 12 6s9.2 6 9.2 6-3.6 6-9.2 6-9.2-6-9.2-6Z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.6" />
-    </svg>
-  ),
-  mcp: (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M9 3v5m6-5v5M7 8h10v4a5 5 0 0 1-10 0V8Zm5 9v4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
     </svg>
   ),
 }
@@ -109,21 +77,21 @@ const THEME_ICONS: Record<ThemeMode, ReactNode> = {
 interface SettingsModalProps {
   open: boolean
   onClose: () => void
+  /** 大模型配置新增 / 编辑 / 删除成功后通知外层刷新模型下拉 */
+  onLlmConfigsChanged?: () => void
 }
 
-/** 设置弹窗：左侧模块导航 + 右侧内容面板（当前仅「主题」可用） */
-export default function SettingsModal({ open, onClose }: SettingsModalProps) {
+/** 设置弹窗：左侧模块导航 + 右侧内容面板 */
+export default function SettingsModal({ open, onClose, onLlmConfigsChanged }: SettingsModalProps) {
   const { t } = useI18n()
   const { mode, setMode } = useTheme()
   const [section, setSection] = useState<SectionKey>('theme')
+  const [llmFormOpen, setLlmFormOpen] = useState(false)
 
   const sections: Array<{ key: SectionKey; label: string }> = [
     { key: 'theme', label: t('settings.nav.theme') },
     { key: 'llm', label: t('settings.nav.llm') },
     { key: 'embedding', label: t('settings.nav.embedding') },
-    { key: 'render', label: t('settings.nav.render') },
-    { key: 'vision', label: t('settings.nav.vision') },
-    { key: 'mcp', label: t('settings.nav.mcp') },
   ]
 
   const themeOptions: Array<{ value: ThemeMode; label: string }> = [
@@ -134,11 +102,21 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
 
   const current = sections.find((item) => item.key === section) ?? sections[0]
 
-  // 打开时锁定背景滚动，并支持 Esc 关闭
+  // 关闭时重置大模型表单状态，避免下次打开停留在编辑态
+  useEffect(() => {
+    if (!open) setLlmFormOpen(false)
+  }, [open])
+
+  // 打开时锁定背景滚动，并支持 Esc 关闭（表单打开时先关表单）
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
+      if (event.key !== 'Escape') return
+      if (section === 'llm' && llmFormOpen) {
+        setLlmFormOpen(false)
+        return
+      }
+      onClose()
     }
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
@@ -147,7 +125,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
       document.body.style.overflow = prevOverflow
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [open, onClose])
+  }, [open, onClose, section, llmFormOpen])
 
   if (!open) return null
 
@@ -156,7 +134,9 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
       className="settings-mask"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target !== event.currentTarget) return
+        if (section === 'llm' && llmFormOpen) setLlmFormOpen(false)
+        else onClose()
       }}
     >
       <div className="settings-modal" role="dialog" aria-modal="true" aria-label={t('settings.title')}>
@@ -168,7 +148,10 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                 key={item.key}
                 className={`settings-nav-item ${item.key === section ? 'is-active' : ''}`}
                 type="button"
-                onClick={() => setSection(item.key)}
+                onClick={() => {
+                  setSection(item.key)
+                  setLlmFormOpen(false)
+                }}
               >
                 <span className="settings-nav-icon">{SECTION_ICONS[item.key]}</span>
                 <span>{item.label}</span>
@@ -180,25 +163,43 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
         <section className="settings-panel">
           <header className="settings-panel-head">
             <h2 className="settings-panel-title">{current.label}</h2>
-            <button
-              className="settings-close"
-              type="button"
-              onClick={onClose}
-              aria-label={t('common.close')}
-              title={t('common.close')}
-            >
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M6 6l12 12M18 6 6 18"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
+            <div className="settings-panel-actions">
+              {section === 'llm' && !llmFormOpen && (
+                <button className="settings-add-btn" type="button" onClick={() => setLlmFormOpen(true)}>
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  {t('settings.llm.add')}
+                </button>
+              )}
+              <button
+                className="settings-close"
+                type="button"
+                onClick={onClose}
+                aria-label={t('common.close')}
+                title={t('common.close')}
+              >
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M6 6l12 12M18 6 6 18"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
           </header>
 
-          {section === 'theme' ? (
+          {section === 'llm' ? (
+            <LlmSettings
+              formOpen={llmFormOpen}
+              onFormOpenChange={setLlmFormOpen}
+              onConfigsChanged={onLlmConfigsChanged}
+            />
+          ) : section === 'embedding' ? (
+            <EmbeddingSettings />
+          ) : section === 'theme' ? (
             <div className="settings-theme">
               <p className="settings-theme-desc">{t('settings.theme.desc')}</p>
               <div className="settings-theme-options">
@@ -215,9 +216,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
                 ))}
               </div>
             </div>
-          ) : (
-            <div className="settings-placeholder">{t('settings.placeholder')}</div>
-          )}
+          ) : null}
         </section>
       </div>
     </div>

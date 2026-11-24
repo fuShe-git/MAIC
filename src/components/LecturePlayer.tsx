@@ -25,6 +25,8 @@ export interface LecturePlayerProps {
   videoUrl: string
   /** 后端回复文本，产物全空时兜底展示 */
   reply: string
+  /** 当前选中的模型「配置id:模型id」，讨论提问沿用同一模型 */
+  modelId?: string
   /** 返回主页面 */
   onBack: () => void
 }
@@ -49,6 +51,7 @@ export default function LecturePlayer({
   courseHtml,
   videoUrl,
   reply,
+  modelId,
   onBack,
 }: LecturePlayerProps) {
   /** 加载失败过的展示类型，pickCourseSource 会跳过它们逐级降级 */
@@ -488,6 +491,7 @@ export default function LecturePlayer({
           courseId={courseId}
           pageList={pageList}
           pageLabel={activePageLabel}
+          modelId={modelId}
           open={discussionOpen}
           onToggle={() => setDiscussionOpen(false)}
           onFocusInput={pauseCourseware}

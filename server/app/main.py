@@ -6,10 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.storage import llm_config_db
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    # 启动时合并历史遗留的重复供应商配置（同名 + 同 Base URL）
+    llm_config_db.merge_duplicate_configs()
 
     app = FastAPI(
         title=settings.app_name,

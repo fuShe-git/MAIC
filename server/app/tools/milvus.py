@@ -21,14 +21,16 @@ Milvus 向量数据库工具集。
     page_content  原文（VARCHAR，中文分词），与 LangChain Document.page_content 同名
     dense         稠密向量（由外部 embedding 模型生成）
     sparse        稀疏向量（BM25 函数在写入时自动生成）
-环境变量（server/.env）：
+向量化配置优先取 app.storage.embedding_db 的唯一配置（设置页保存），
+未保存时才回退 server/.env 的默认值：
     MILVUS_URI       Milvus 地址，默认 http://127.0.0.1:19530
     MILVUS_TOKEN     Zilliz Cloud 等托管服务需要的令牌，本地部署可不填
-    VECTOR_API_KEY   阿里云百炼 API Key，向量化必需
+    VECTOR_API_KEY   阿里云百炼 API Key，未落库密钥时必需
     VECTOR_BASE_URL  向量化服务地址（可选）
     VECTOR_MODEL     向量化模型名（可选，默认 text-embedding-v4）
 """
 
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -45,17 +47,16 @@ from pymilvus import (
     WeightedRanker,
 )
 
+from app.storage import embedding_db
+
 # 显式指定 server/.env，否则以脚本方式运行时读不到配置
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-COLLECTION_NAME = "threeKill"
-# 稠密向量维度：必须与 embedding 模型的输出维度一致。百炼 text-embedding-v4 默认 1024 维
-DIM = 1024
+logger = logging.getLogger(__name__)
 
-# 阿里云百炼的 OpenAI 兼容地址（国际站为 https://dashscope-intl.aliyuncs.com/compatible-mode/v1）
-VECTOR_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-# text-embedding-v4：默认 1024 维，也可选 2048/1536/768/512/256/128/64
-VECTOR_MODEL = "text-embedding-v4"
+COLLECTION_NAME = "threeKill"
+# 兜底维度：未落库配置时使用。百炼 text-embedding-v4 默认 1024 维
+DIM = 1024
 
 # 稠密向量的相似度度量。用 COSINE 而不是 IP：
 # 百炼输出的向量不是单位向量，IP 分数没有固定上下界，没法用 0.5 这种阈值卡；
@@ -66,30 +67,50 @@ DENSE_METRIC = "COSINE"
 # 基础：向量化（把问题 / 文本转成 dense 向量）
 # ---------------------------------------------------------------------------
 
+def get_dim() -> int:
+    """当前生效的向量维度：设置页保存的配置优先，异常时回退 DIM。"""
+    try:
+        return int(embedding_db.get_runtime_config()["dimensions"]) or DIM
+    except Exception:
+        logger.warning("向量维度配置读取失败，使用默认值 %d", DIM, exc_info=True)
+        return DIM
+
+
 @lru_cache
 def get_embeddings() -> OpenAIEmbeddings:
     """获取 embedding 客户端，首次调用时创建并缓存。
 
-    百炼走 OpenAI 兼容协议，因此直接复用 langchain 的 OpenAIEmbeddings。
+    配置优先级：设置页保存到数据库的唯一配置 > server/.env 默认值。
+    保存配置后由 /api/embedding-config 调用 cache_clear() 使其重新初始化。
 
     Returns:
-        OpenAIEmbeddings: 按 DIM、VECTOR_MODEL、VECTOR_BASE_URL 配置好的客户端。
+        OpenAIEmbeddings: 按当前配置初始化的客户端。
 
     Raises:
-        RuntimeError: 环境变量 VECTOR_API_KEY 未配置。
+        RuntimeError: 配置和环境变量里都没有 API Key。
     """
-    api_key = (os.getenv("VECTOR_API_KEY") or "").strip()
+    config = embedding_db.get_runtime_config()
+    api_key = (config["api_key"] or "").strip()
     if not api_key:
-        raise RuntimeError("未配置 VECTOR_API_KEY，请在 server/.env 中填写阿里云百炼 API Key")
-    return OpenAIEmbeddings(
-        model=os.getenv("VECTOR_MODEL", VECTOR_MODEL),
-        api_key=api_key,
-        base_url=os.getenv("VECTOR_BASE_URL", VECTOR_BASE_URL),
+        raise RuntimeError(
+            "未配置向量化 API Key，请在「设置 → Embedding」中填写，或在 server/.env 中配置 VECTOR_API_KEY"
+        )
+
+    kwargs = {
+        "model": config["model"],
+        "api_key": api_key,
+        "base_url": config["base_url"],
         # 维度必须与建集合时的 dim 一致，否则写入/检索都会报维度不匹配
-        dimensions=DIM,
+        "dimensions": int(config["dimensions"]),
         # 非 OpenAI 官方模型，关掉 tiktoken 本地分词，把原文直接发给服务端
-        check_embedding_ctx_length=False,
-    )
+        "check_embedding_ctx_length": False,
+    }
+    try:
+        return OpenAIEmbeddings(timeout=float(config["timeout"]), **kwargs)
+    except Exception:
+        # 兼容旧版 langchain-openai：不支持 timeout 参数时忽略，不影响向量化
+        logger.warning("当前 langchain-openai 不支持 timeout 参数，已忽略", exc_info=True)
+        return OpenAIEmbeddings(**kwargs)
 
 
 def embed_text(text: str) -> list[float]:
@@ -99,7 +120,7 @@ def embed_text(text: str) -> list[float]:
         text: 待向量化的文本，前后空白会在内部去掉。
 
     Returns:
-        list[float]: 长度为 DIM 的稠密向量，可直接传给 search_dense / hybrid_search。
+        list[float]: 长度由当前 Embedding 配置决定的稠密向量，可直接传给 search_dense / hybrid_search。
 
     Raises:
         ValueError: text 为空或纯空白。
@@ -148,8 +169,9 @@ def get_client() -> MilvusClient:
     return MilvusClient(uri=uri)
 
 
-def _build_schema(dim: int = DIM):
+def _build_schema(dim: int | None = None):
     """构造集合结构：原文 + 稠密向量 + 由 BM25 函数自动生成的稀疏向量。"""
+    dim = dim or get_dim()
     schema = MilvusClient.create_schema(auto_id=True, enable_dynamic_field=True)
     schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
     schema.add_field(
@@ -174,7 +196,7 @@ def _build_schema(dim: int = DIM):
 
 def create_collection(
     client: MilvusClient,
-    dim: int = DIM,
+    dim: int | None = None,
     drop_existing: bool = False,
     collection_name: str = COLLECTION_NAME,
 ) -> bool:
@@ -240,6 +262,19 @@ def insert_docs(
     res = client.insert(collection_name=collection_name, data=data)
     return res["insert_count"]
 
+def _collection_dim(client: MilvusClient, collection_name: str) -> int | None:
+    """读取已有集合 dense 字段的维度；读不到返回 None，不阻断写入。"""
+    try:
+        details = client.describe_collection(collection_name)
+        for field in details.get("fields") or []:
+            if field.get("name") == "dense":
+                value = (field.get("params") or {}).get("dim")
+                return int(value) if value else None
+    except Exception:
+        logger.warning("读取集合 %s 的维度失败，跳过预检", collection_name, exc_info=True)
+    return None
+
+
 def insert_texts(
     client: MilvusClient,
     data: list[dict],
@@ -269,13 +304,22 @@ def insert_texts(
     if not docs:
         return 0
 
+    expected_dim = get_dim()
+    existing_dim = _collection_dim(client, collection_name)
+    if existing_dim and existing_dim != expected_dim:
+        raise ValueError(
+            f"向量维度不一致：集合 {collection_name} 为 {existing_dim} 维，"
+            f"当前配置为 {expected_dim} 维；请同步修改 Embedding 配置的向量维度，"
+            "或用 create_collection(client, drop_existing=True) 重建集合（会清空旧数据）"
+        )
+
     vectors = embed_texts([doc["page_content"] for doc in docs], batch_size=batch_size)
 
     for doc, vector in zip(docs, vectors):
-        if len(vector) != DIM:
+        if len(vector) != expected_dim:
             raise ValueError(
-                f"向量维度不一致：模型输出 {len(vector)} 维，集合要求 {DIM} 维，"
-                "请用 create_collection(client, drop_existing=True) 按 DIM 重建集合"
+                f"向量维度不一致：模型输出 {len(vector)} 维，配置要求 {expected_dim} 维，"
+                "请检查 Embedding 配置里的向量维度"
             )
         doc["dense"] = vector
 

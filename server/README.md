@@ -103,6 +103,10 @@ python -m uvicorn app.main:app --reload --port 8001
 | GET | `/` | 服务信息（名称、版本、文档地址） |
 | GET | `/api/health` | 健康检查，返回 `{"status": "ok", "version": "0.1.0"}` |
 | POST | `/api/chat` | 对话接口，请求体 `{"message": "你好"}`，返回 `{"reply": "..."}` |
+| GET | `/api/llm-configs` | 列出大模型服务商 / 模型配置（API Key 已脱敏） |
+| POST | `/api/llm-configs` | 新建服务商配置，落库到 `outputs/maic.db` |
+| PUT | `/api/llm-configs/{id}` | 更新配置；`apiKey` 留空表示保留原密钥 |
+| DELETE | `/api/llm-configs/{id}` | 删除配置及其模型 |
 | GET | `/docs` | Swagger UI 交互式接口文档 |
 | GET | `/redoc` | ReDoc 风格的接口文档 |
 | GET | `/openapi.json` | OpenAPI 规范文件 |
@@ -115,9 +119,17 @@ python -m uvicorn app.main:app --reload --port 8001
 | `DEBUG` | `false` | 调试模式开关，开启后返回详细错误堆栈 |
 | `API_PREFIX` | `/api` | 所有业务接口的统一路径前缀 |
 | `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | 允许跨域的前端来源，多个用英文逗号分隔 |
-| `MODEL_NAME` | 无 | 大模型名称，由 `app/agent/agent.py` 读取 |
-| `API_KEY` | 无 | 大模型服务商密钥 |
-| `API_BASE_URL` | 无 | 兼容 OpenAI 协议的服务地址 |
+| `MODEL_NAME` | 无 | 系统默认大模型名称；未在前端选择自定义模型时生效 |
+| `API_KEY` | 无 | 系统默认大模型服务商密钥 |
+| `API_BASE_URL` | 无 | 系统默认兼容 OpenAI 协议的服务地址 |
+
+> 前端「设置 → 大模型」中新增的服务商 / 模型会写入 `outputs/maic.db`，与 `.env` 里的系统默认模型并存：
+> 首页选中某个配置后，课件生成全链路（大纲 / 页面 / 测验）与课件内提问都会使用该模型；
+> 选择「系统默认」或未配置时回退上面的环境变量。浏览器旧版 localStorage 配置不再读取，
+> 首次打开设置页会自动清理，需要重新添加。
+>
+> 合并规则：**供应商名 + Base URL 相同**的配置会自动合并成一条，模型按名称去重；
+> 新建、编辑和读取列表时都会执行该规则，因此历史遗留的重复卡片也会被自动清理。
 
 ## 新增一个接口
 

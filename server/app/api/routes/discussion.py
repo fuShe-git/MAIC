@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from app.agent.agent import reset_llm_config, resolve_llm_config, set_llm_config
 from app.agent.discussion import stream_answer
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class DiscussionRequest(BaseModel):
     firstQuestion: bool = True
     coursePages: Optional[list[DiscussionPage]] = None
     history: list[DiscussionHistoryItem] = []
+    modelId: Optional[str] = None  # 所选模型「配置id:模型id」；空 / platform-default 用系统默认
 
 
 def _sse(event: dict) -> str:
@@ -59,8 +61,13 @@ async def discussion_stream(payload: DiscussionRequest):
         return StreamingResponse(_bad(), media_type="text/event-stream")
 
     async def _event_stream():
+        # 课件内提问同样使用用户在首页选中的模型
+        model_config = await resolve_llm_config(payload.modelId)
+        token = set_llm_config(model_config)
+        data = payload.model_dump()
+        data.pop("modelId", None)
         try:
-            async for event in stream_answer(payload.model_dump(), request_id):
+            async for event in stream_answer(data, request_id):
                 yield _sse(event)
         except asyncio.CancelledError:
             raise
@@ -68,6 +75,8 @@ async def discussion_stream(payload: DiscussionRequest):
             # 日志只记错误类型，不打印问题全文或课件正文
             logger.warning("讨论失败 rid=%s（%s）", request_id, type(exc).__name__)
             yield _sse({"type": "error", "message": "讨论服务异常，请稍后重试"})
+        finally:
+            reset_llm_config(token)
 
     return StreamingResponse(
         _event_stream(),

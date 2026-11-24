@@ -37,6 +37,8 @@ export interface DiscussionPayload {
   firstQuestion: boolean
   coursePages?: DiscussionPage[]
   history: Array<{ role: 'user' | 'assistant'; content: string }>
+  /** 所选模型「配置id:模型id」；不传表示使用服务端默认模型 */
+  modelId?: string
 }
 
 /** 讨论 SSE 事件，字段与后端扁平事件保持一致 */

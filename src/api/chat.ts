@@ -88,6 +88,8 @@ export interface ConfirmRequest {
   catalogList?: OutlineModule[]
   confirmed?: boolean
   runId?: string
+  /** 所选模型「配置id:模型id」；不传表示使用服务端默认模型 */
+  modelId?: string
 }
 
 /** 手动重试失败页的请求体 */
@@ -96,6 +98,8 @@ export interface RetryRequest {
   threadId?: string
   inds?: number[]
   runId?: string
+  /** 所选模型「配置id:模型id」；不传表示使用服务端默认模型 */
+  modelId?: string
 }
 
 export interface ChatPayload {
@@ -105,6 +109,8 @@ export interface ChatPayload {
   autoConfirm?: boolean
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
   runId?: string
+  /** 所选模型「配置id:模型id」；不传表示使用服务端默认模型 */
+  modelId?: string
 }
 
 /**

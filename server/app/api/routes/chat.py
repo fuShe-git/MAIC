@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agent import sessions
+from app.agent.agent import reset_llm_config, resolve_llm_config, set_llm_config
 from app.agent.agents.assemble_agent import _append_quiz_section, _quiz_section
 from app.agent.graph import is_interrupted, resume_classroom, run_classroom
 from app.agent.nodes import (
@@ -74,6 +75,7 @@ class ChatRequest(BaseModel):
     autoConfirm: bool = True             # False 时大纲产出后等待人工确认
     history: Optional[list] = None       # 多轮历史 [{role, content}]（可选）
     runId: Optional[str] = None          # 本次生成任务 id（中断/取消定位用）
+    modelId: Optional[str] = None        # 所选模型「配置id:模型id」；空 / platform-default 用系统默认
 
 
 class ChatResponse(BaseModel):
@@ -93,6 +95,7 @@ class ConfirmRequest(BaseModel):
     catalogList: Optional[list] = None   # 用户编辑后的大纲
     confirmed: bool = True               # False 表示取消生成
     runId: Optional[str] = None          # 本次生成任务 id（中断/取消定位用）
+    modelId: Optional[str] = None        # 所选模型（确认后继续生成仍沿用同一模型）
 
 
 class RetryRequest(BaseModel):
@@ -100,6 +103,7 @@ class RetryRequest(BaseModel):
     threadId: Optional[str] = None       # 兜底定位用
     inds: Optional[list] = None          # 要重试的模块 ind；不传=重试全部失败页
     runId: Optional[str] = None          # 本次生成任务 id（中断/取消定位用）
+    modelId: Optional[str] = None        # 所选模型（重试沿用同一模型）
 
 
 class CancelRequest(BaseModel):
@@ -181,13 +185,18 @@ async def chat(payload: ChatRequest):
     """同步调用图，返回最终结果；不再推送进度事件。"""
     session_id = (payload.sessionId or "").strip()
     history = sessions.get_history(session_id) if session_id else []
-    state = await run_classroom(
-        payload.message,
-        thread_id=payload.threadId,
-        auto_confirm=payload.autoConfirm,
-        history=history,
-        session_id=session_id,
-    )
+    # 解析所选模型并注入当前上下文；get_llm 会在本次请求内优先使用它
+    token = set_llm_config(await resolve_llm_config(payload.modelId))
+    try:
+        state = await run_classroom(
+            payload.message,
+            thread_id=payload.threadId,
+            auto_confirm=payload.autoConfirm,
+            history=history,
+            session_id=session_id,
+        )
+    finally:
+        reset_llm_config(token)
     result = _terminal_payload(state)
     if session_id and result["needLecture"]:
         sessions.append_message(session_id, "user", payload.message)
@@ -209,6 +218,8 @@ async def chat_stream(payload: ChatRequest):
     thread_id = (payload.threadId or "").strip() or uuid4().hex
     run_id = (payload.runId or "").strip() or uuid4().hex
     events: asyncio.Queue = asyncio.Queue()
+    # 先按所选模型解析运行参数；create_task 会自动继承这份上下文
+    model_config = await resolve_llm_config(payload.modelId)
 
     # 先取历史（不含本轮消息）供意图识别，再记录本轮用户消息
     history = sessions.get_history(session_id) if session_id else []
@@ -241,6 +252,8 @@ async def chat_stream(payload: ChatRequest):
 
     async def _event_stream():
         set_progress_emitter(events.put_nowait)
+        # create_task 会复制当前上下文：后台任务里的 get_llm 能读到本次所选模型
+        llm_token = set_llm_config(model_config)
         task = asyncio.create_task(_runner())
         _register_task(run_id, task)
         try:
@@ -265,6 +278,8 @@ async def chat_stream(payload: ChatRequest):
                 pass
             except Exception:
                 logger.exception("生成任务收尾异常")
+            finally:
+                reset_llm_config(llm_token)
 
     return StreamingResponse(
         _event_stream(),
@@ -294,6 +309,8 @@ async def chat_confirm(payload: ConfirmRequest):
 
     run_id = (payload.runId or "").strip() or thread_id
     events: asyncio.Queue = asyncio.Queue()
+    # 确认后继续生成仍沿用用户当前选中的模型
+    model_config = await resolve_llm_config(payload.modelId)
     answer = {
         "confirmed": bool(payload.confirmed),
         "catalogList": payload.catalogList or [],
@@ -313,6 +330,8 @@ async def chat_confirm(payload: ConfirmRequest):
 
     async def _event_stream():
         set_progress_emitter(events.put_nowait)
+        # create_task 会复制当前上下文：后台任务里的 get_llm 能读到本次所选模型
+        llm_token = set_llm_config(model_config)
         task = asyncio.create_task(_runner())
         _register_task(run_id, task)
         try:
@@ -337,6 +356,8 @@ async def chat_confirm(payload: ConfirmRequest):
                 pass
             except Exception:
                 logger.exception("生成任务收尾异常")
+            finally:
+                reset_llm_config(llm_token)
 
     return StreamingResponse(
         _event_stream(),
@@ -359,6 +380,8 @@ async def chat_retry(payload: RetryRequest):
     session_id = (payload.sessionId or "").strip()
     run_id = (payload.runId or "").strip() or uuid4().hex
     events: asyncio.Queue = asyncio.Queue()
+    # 重试失败页同样使用用户当前选中的模型
+    model_config = await resolve_llm_config(payload.modelId)
 
     async def _runner():
         try:
@@ -372,6 +395,8 @@ async def chat_retry(payload: RetryRequest):
 
     async def _event_stream():
         set_progress_emitter(events.put_nowait)
+        # create_task 会复制当前上下文：后台任务里的 get_llm 能读到本次所选模型
+        llm_token = set_llm_config(model_config)
         task = asyncio.create_task(_runner())
         _register_task(run_id, task)
         try:
@@ -396,6 +421,8 @@ async def chat_retry(payload: RetryRequest):
                 pass
             except Exception:
                 logger.exception("生成任务收尾异常")
+            finally:
+                reset_llm_config(llm_token)
 
     return StreamingResponse(
         _event_stream(),

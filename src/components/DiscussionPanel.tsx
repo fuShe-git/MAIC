@@ -16,6 +16,8 @@ export interface DiscussionPanelProps {
   courseId: string
   pageList: PageItem[]
   pageLabel: string
+  /** 当前选中的模型「配置id:模型id」；不传表示使用服务端默认模型 */
+  modelId?: string
   open: boolean
   onToggle: () => void
   /** 当前面板宽度，由播放器统一管理 */
@@ -43,6 +45,7 @@ export default function DiscussionPanel({
   courseId,
   pageList,
   pageLabel,
+  modelId,
   open,
   onToggle,
   width,
@@ -133,6 +136,7 @@ export default function DiscussionPanel({
       firstQuestion,
       coursePages,
       history: buildHistory(messages),
+      modelId,
     }
 
     setMessages((prev) => [

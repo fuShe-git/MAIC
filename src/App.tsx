@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { cancelGeneration, chatStream, confirmOutline, retryFailedPages } from './api/chat'
 import type { ChatResponse, OutlineModule, ProgressEvent, ProgressStep } from './api/chat'
 import { getCourse } from './api/courses'
 import { generatedHtmlUrl, listGeneratedFiles } from './api/generated'
 import type { GeneratedCourse } from './api/generated'
+import { listLlmConfigs } from './api/llmConfigs'
+import type { LlmConfig } from './api/llmConfigs'
 import { toPageItems } from './utils/courseContext'
 import ConfirmView from './components/ConfirmView'
 import LecturePlayer from './components/LecturePlayer'
@@ -14,6 +16,7 @@ import SettingsModal from './components/SettingsModal'
 import TopBar from './components/TopBar'
 import { useI18n } from './i18n/context'
 import { EXAMPLES } from './i18n/messages'
+import type { MessageKey } from './i18n/messages'
 import './App.css'
 
 /** 等待页的进度状态快照 */
@@ -45,6 +48,57 @@ const INITIAL_WAIT: WaitState = {
   topic: '',
 }
 
+const DEFAULT_PROVIDER_ID = 'platform-default'
+const DEFAULT_MODEL_ID = 'platform-default'
+const MODEL_STORAGE_KEY = 'maic.composer.model'
+
+interface ModelOption {
+  id: string
+  name: string
+  providerId: string
+}
+
+interface ProviderOption {
+  id: string
+  name: string
+  models: ModelOption[]
+}
+
+/** 左侧服务商 → 右侧可用模型；服务商来自数据库中已保存的配置 */
+function buildModelGroups(
+  t: (key: MessageKey) => string,
+  configs: LlmConfig[],
+): ProviderOption[] {
+  const groups: ProviderOption[] = [
+    {
+      id: DEFAULT_PROVIDER_ID,
+      name: t('composer.model.platform'),
+      models: [
+        {
+          id: DEFAULT_MODEL_ID,
+          name: t('composer.model.followServer'),
+          providerId: DEFAULT_PROVIDER_ID,
+        },
+      ],
+    },
+  ]
+  configs.forEach((config) => {
+    const models = config.models
+      .map((model) => ({
+        id: `${config.id}:${model.id}`,
+        name: model.name.trim(),
+        providerId: config.id,
+      }))
+      .filter((model) => model.name.length > 0)
+    groups.push({
+      id: config.id,
+      name: config.name.trim() || t('composer.model.custom'),
+      models,
+    })
+  })
+  return groups
+}
+
 function App() {
   const { t, lang } = useI18n()
   const [prompt, setPrompt] = useState('')
@@ -71,6 +125,75 @@ function App() {
   // 首页生成记录：videos 目录下的全部课件
   const [generated, setGenerated] = useState<GeneratedCourse[]>([])
   const [generatedLoaded, setGeneratedLoaded] = useState(false)
+  // 输入框左下角的模型选择：服务商 / 模型来自后端数据库
+  const [llmConfigs, setLlmConfigs] = useState<LlmConfig[]>([])
+  // 是否已完成一次配置拉取：未完成前不要用「系统默认」覆盖用户记住的模型
+  const [llmConfigsLoaded, setLlmConfigsLoaded] = useState(false)
+  const [modelGroups, setModelGroups] = useState<ProviderOption[]>(() => buildModelGroups(t, []))
+  const [modelId, setModelId] = useState(() => {
+    try {
+      return localStorage.getItem(MODEL_STORAGE_KEY) || DEFAULT_MODEL_ID
+    } catch {
+      return DEFAULT_MODEL_ID
+    }
+  })
+  const [activeProviderId, setActiveProviderId] = useState(DEFAULT_PROVIDER_ID)
+  const [providerSearch, setProviderSearch] = useState('')
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const modelRootRef = useRef<HTMLDivElement | null>(null)
+
+  /** 拉取数据库里的服务商 / 模型配置；后端不可用时保留「系统默认」兜底项 */
+  const refreshLlmConfigs = useCallback(() => {
+    listLlmConfigs()
+      .then(setLlmConfigs)
+      .catch(() => setLlmConfigs([]))
+      .finally(() => setLlmConfigsLoaded(true))
+  }, [])
+
+  // 首次进入拉取配置；设置页保存成功后也会调用 refreshLlmConfigs 增量刷新
+  useEffect(() => {
+    refreshLlmConfigs()
+  }, [refreshLlmConfigs])
+
+  // 语种切换或配置变更后重建服务商 / 模型分组
+  useEffect(() => {
+    setModelGroups(buildModelGroups(t, llmConfigs))
+  }, [t, llmConfigs])
+
+  // 配置加载完成或被删除后，若记住的模型已不存在则回退「系统默认」
+  useEffect(() => {
+    if (!llmConfigsLoaded) return
+    const allModels = modelGroups.flatMap((group) => group.models)
+    if (allModels.length > 0 && !allModels.some((model) => model.id === modelId)) {
+      setModelId(allModels[0].id)
+    }
+  }, [llmConfigsLoaded, modelGroups, modelId])
+
+  // 记住用户选择的模型
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODEL_STORAGE_KEY, modelId)
+    } catch {
+      // 隐私模式下忽略
+    }
+  }, [modelId])
+
+  // 点击外部或按 Esc 收起模型菜单
+  useEffect(() => {
+    if (!modelMenuOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (modelRootRef.current && !modelRootRef.current.contains(event.target as Node)) setModelMenuOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setModelMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [modelMenuOpen])
 
   // 进入首页时拉取生成记录；后端不可用时静默降级为空列表
   useEffect(() => {
@@ -222,7 +345,8 @@ function App() {
     setWait(INITIAL_WAIT)
     setView('waiting')
 
-    chatStream({ message: text, sessionId, runId }, handleEvent, controller.signal)
+    // modelId 为「系统默认」时后端会回退 .env 的默认模型
+    chatStream({ message: text, sessionId, runId, modelId }, handleEvent, controller.signal)
       .catch((err: unknown) => {
         // 用户主动返回首页触发的中断不按错误处理
         if (controller.signal.aborted) return
@@ -307,7 +431,11 @@ function App() {
     setWait(INITIAL_WAIT)
     setView('waiting')
 
-    confirmOutline({ threadId, catalogList: catalog, confirmed: true, runId }, handleEvent, controller.signal)
+    confirmOutline(
+      { threadId, catalogList: catalog, confirmed: true, runId, modelId },
+      handleEvent,
+      controller.signal,
+    )
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setWait((prev) => ({
@@ -336,7 +464,7 @@ function App() {
   /** 确认视图「取消」：通知后端取消本次生成，回首页 */
   function handleCancelOutline() {
     if (threadId && !busy) {
-      confirmOutline({ threadId, confirmed: false }, () => {}).catch((err: unknown) => {
+      confirmOutline({ threadId, confirmed: false, modelId }, () => {}).catch((err: unknown) => {
         console.error('取消生成失败：', err)
       })
     }
@@ -356,7 +484,7 @@ function App() {
     settledRef.current = false
     setWait((prev) => ({ ...prev, status: 'retrying', step: 'retry', message: '正在重试失败的页面…' }))
 
-    retryFailedPages({ sessionId, runId }, handleEvent, controller.signal)
+    retryFailedPages({ sessionId, runId, modelId }, handleEvent, controller.signal)
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setWait((prev) => ({
@@ -427,6 +555,25 @@ function App() {
     .map((item) => `[${item}]`)
     .join('\n')}`
 
+  const allModels = modelGroups.flatMap((group) => group.models)
+  const selectedModel = allModels.find((model) => model.id === modelId) ?? allModels[0]
+  const selectedProvider = modelGroups.find((group) => group.id === selectedModel.providerId) ?? modelGroups[0]
+  const visibleProviders = modelGroups.filter((group) =>
+    group.name.toLowerCase().includes(providerSearch.trim().toLowerCase()),
+  )
+  const activeProvider = visibleProviders.find((group) => group.id === activeProviderId) ?? visibleProviders[0]
+
+  const toggleModelMenu = () => {
+    const groups = buildModelGroups(t, llmConfigs)
+    setModelGroups(groups)
+    const models = groups.flatMap((group) => group.models)
+    const current = models.find((model) => model.id === modelId) ?? models[0]
+    if (current && current.id !== modelId) setModelId(current.id)
+    setActiveProviderId(current?.providerId ?? DEFAULT_PROVIDER_ID)
+    setProviderSearch('')
+    setModelMenuOpen((prev) => !prev)
+  }
+
   if (view === 'confirm') {
     return (
       <ConfirmView
@@ -447,6 +594,7 @@ function App() {
         courseHtml={lecture.courseHtml}
         videoUrl={lecture.videoUrl}
         reply={lecture.reply}
+        modelId={modelId}
         onBack={handleBackFromPlayer}
       />
     )
@@ -501,6 +649,95 @@ function App() {
         />
 
         <div className="composer-foot">
+          <div className="composer-model" ref={modelRootRef}>
+            <button
+              className={`composer-model-trigger ${modelMenuOpen ? 'is-open' : ''}`}
+              type="button"
+              aria-label={t('composer.model.select')}
+              aria-haspopup="menu"
+              aria-expanded={modelMenuOpen}
+              onClick={toggleModelMenu}
+            >
+              <svg className="composer-model-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M7.5 17.5h9a4 4 0 0 0 .6-7.96A5.5 5.5 0 0 0 6.9 8.6 4.5 4.5 0 0 0 7.5 17.5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="composer-model-label">
+                {selectedProvider.name} / {selectedModel.name}
+              </span>
+              <svg className="composer-model-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+
+            {modelMenuOpen && (
+              <div className="composer-model-menu" role="menu" aria-label={t('composer.model.select')}>
+                <div className="composer-model-search">
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="10.5" cy="10.5" r="6.2" stroke="currentColor" strokeWidth="1.7" />
+                    <path d="m15.2 15.2 4.3 4.3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                  </svg>
+                  <input
+                    value={providerSearch}
+                    placeholder={t('composer.model.search')}
+                    aria-label={t('composer.model.search')}
+                    onChange={(event) => setProviderSearch(event.target.value)}
+                  />
+                </div>
+
+                <div className="composer-model-columns">
+                  <div className="composer-model-providers" role="listbox" aria-label={t('composer.model.search')}>
+                    {visibleProviders.length === 0 && (
+                      <div className="composer-model-empty">{t('composer.model.noProvider')}</div>
+                    )}
+                    {visibleProviders.map((group) => (
+                      <button
+                        key={group.id}
+                        className={`composer-model-provider ${group.id === activeProvider?.id ? 'is-active' : ''}`}
+                        type="button"
+                        role="option"
+                        aria-selected={group.id === activeProvider?.id}
+                        onClick={() => setActiveProviderId(group.id)}
+                      >
+                        <svg className="composer-model-provider-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <rect x="4" y="7" width="16" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" />
+                          <path d="M9 7V5.5h6V7M8 12h1m3 0h1m3 0h1M9 16h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                        </svg>
+                        <span>{group.name}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="composer-model-models" role="listbox" aria-label={t('composer.model.select')}>
+                    {(!activeProvider || activeProvider.models.length === 0) && (
+                      <div className="composer-model-empty">{t('composer.model.noModel')}</div>
+                    )}
+                    {activeProvider?.models.map((model) => (
+                      <button
+                        key={model.id}
+                        className={`composer-model-option ${model.id === modelId ? 'is-active' : ''}`}
+                        type="button"
+                        role="option"
+                        aria-selected={model.id === modelId}
+                        onClick={() => {
+                          setModelId(model.id)
+                          setModelMenuOpen(false)
+                        }}
+                      >
+                        <span className={`composer-model-radio ${model.id === modelId ? 'is-checked' : ''}`} aria-hidden="true" />
+                        <span className="composer-model-name">{model.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             className="btn-enter"
             type="button"
@@ -529,7 +766,11 @@ function App() {
         onRename={handleRenameGenerated}
       />
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onLlmConfigsChanged={refreshLlmConfigs}
+      />
     </div>
   )
 }
