@@ -1,159 +1,249 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { OutlineModule } from '../api/chat'
+import GeneratingMark from './GeneratingMark'
 import './ConfirmView.css'
 
 export type { OutlineModule }
 
-interface ConfirmViewProps {
-  /** 待确认的大纲（可编辑） */
+export interface OutlineEditPayload {
+  /** 当前编辑中的完整大纲（含用户新增页面） */
   catalogList: OutlineModule[]
-  /** 确认并生成：回传编辑后的大纲 */
-  onConfirm: (catalogList: OutlineModule[]) => void
-  /** 取消生成 */
-  onCancel: () => void
-  /** 是否正在提交（禁用按钮） */
-  busy?: boolean
 }
 
-/**
- * 人工确认大纲视图（v4）：
- * 大纲产出后暂停生成，用户可增删改每个模块的标题与讲稿，确认后只重走 page/audio。
- */
-export default function ConfirmView({ catalogList, onConfirm, onCancel, busy }: ConfirmViewProps) {
-  const [modules, setModules] = useState<OutlineModule[]>(() =>
-    catalogList.map((module) => ({
-      ind: module.ind,
-      title: [...module.title],
-      context: [...module.context],
-    })),
-  )
+export interface OutlinePanelProps {
+  catalogList: OutlineModule[]
+  status: 'loading' | 'ready' | 'regenerating' | 'error'
+  errorMessage?: string
+  /** 编辑中的大纲实时回传，便于直接切步骤时不丢失修改 */
+  onDraftChange?: (catalogList: OutlineModule[]) => void
+  /** 按当前编辑的大纲（含新增页面）重新生成大纲 */
+  onRegenerateOutline: (payload: OutlineEditPayload) => void
+}
+
+function cloneModules(catalogList: OutlineModule[]): OutlineModule[] {
+  return catalogList.map((module) => ({
+    ind: module.ind,
+    title: [...module.title],
+    context: [...module.context],
+    summary: module.summary ?? '',
+    isNew: module.isNew,
+  }))
+}
+
+function cleanModules(modules: OutlineModule[]): OutlineModule[] {
+  return modules.map((module, index) => ({
+    ind: index + 1,
+    title: module.title.length ? [...module.title] : [''],
+    context: [...module.context],
+    summary: (module.summary ?? '').trim(),
+    isNew: module.isNew,
+  }))
+}
+
+/** 大纲确认面板：只展示每页主题与简介，支持拖动排序与按意见重新生成。 */
+export default function ConfirmView({
+  catalogList,
+  status,
+  errorMessage,
+  onDraftChange,
+  onRegenerateOutline,
+}: OutlinePanelProps) {
+  const [modules, setModules] = useState<OutlineModule[]>(() => cloneModules(catalogList))
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    setModules(cloneModules(catalogList))
+  }, [catalogList])
+
+  useEffect(() => {
+    onDraftChange?.(cleanModules(modules))
+  }, [modules, onDraftChange])
+
+  const busy = status === 'loading' || status === 'regenerating'
+  // 只有用户新增的页面可删除；新增页面主题都填写了内容才允许重新生成
+  const addedModules = modules.filter((module) => module.isNew)
+  const canRegenerate =
+    !busy &&
+    addedModules.length > 0 &&
+    addedModules.every((module) => (module.title[0] ?? '').trim().length > 0)
 
   const updateModule = (index: number, patch: Partial<OutlineModule>) => {
     setModules((prev) => prev.map((module, i) => (i === index ? { ...module, ...patch } : module)))
   }
 
-  const updatePoint = (moduleIndex: number, pointIndex: number, key: 'title' | 'context', value: string) => {
+  const updateTitle = (moduleIndex: number, value: string) => {
     setModules((prev) =>
       prev.map((module, i) => {
         if (i !== moduleIndex) return module
-        const next = [...module[key]]
-        next[pointIndex] = value
-        return { ...module, [key]: next }
+        const title = [...module.title]
+        title[0] = value
+        return { ...module, title }
       }),
     )
   }
 
-  const addPoint = (moduleIndex: number) => {
-    setModules((prev) =>
-      prev.map((module, i) =>
-        i === moduleIndex
-          ? { ...module, title: [...module.title, '新知识点'], context: [...module.context, ''] }
-          : module,
-      ),
-    )
+  const moveModule = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0) return
+    setModules((prev) => {
+      if (from >= prev.length || to >= prev.length) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return next
+    })
   }
 
-  const removePoint = (moduleIndex: number, pointIndex: number) => {
-    setModules((prev) =>
-      prev.map((module, i) => {
-        if (i !== moduleIndex || module.title.length <= 1) return module
-        return {
-          ...module,
-          title: module.title.filter((_, p) => p !== pointIndex),
-          context: module.context.filter((_, p) => p !== pointIndex),
-        }
-      }),
-    )
+  const finishDrag = () => {
+    setDraggingIndex(null)
+    setDragOverIndex(null)
   }
 
-  const removeModule = (moduleIndex: number) => {
-    setModules((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== moduleIndex)))
+  const addModule = () => {
+    // 新页面主题留空，由用户自行填写，避免默认文案被当成有效内容
+    setModules((prev) => [
+      ...prev,
+      { ind: prev.length + 1, title: [''], context: [''], summary: '', isNew: true },
+    ])
   }
 
-  const handleConfirm = () => {
-    // 重新连续编号，保证 ind 与页面/音频一一对应
-    const cleaned = modules
-      .map((module, i) => ({
-        ind: i + 1,
-        title: module.title.filter((t) => t.trim()),
-        context: module.context.slice(0, module.title.length),
-      }))
-      .filter((module) => module.title.length > 0)
-    onConfirm(cleaned)
+  const removeModule = (index: number) => {
+    setModules((prev) => {
+      if (!prev[index]?.isNew) return prev
+      return cleanModules(prev.filter((_, i) => i !== index))
+    })
   }
 
   return (
-    <div className="confirm-root">
-      <div className="confirm-card">
-        <div className="confirm-header">
-          <h1>请确认讲解大纲</h1>
-          <p>可以修改标题与讲稿、增删知识点，确认后开始生成页面与音频</p>
-        </div>
+    <section className="pw-fade-in flex min-h-0 flex-1 flex-col gap-3">
+      <header className="shrink-0">
+        <h2 className="m-0 text-[18px] font-semibold text-[var(--text)]">大纲确认</h2>
+        <p className="mt-1 text-[13px] leading-5 text-[var(--text-dim)]">
+          每个页面的主题与简介都可以直接修改，拖动左侧手柄可调整页面顺序；新增的页面可以删除。
+        </p>
+      </header>
 
-        <div className="confirm-body">
-          {modules.map((module, moduleIndex) => (
-            <div className="confirm-module" key={moduleIndex}>
-              <div className="confirm-module-head">
-                <span className="confirm-module-ind">第 {moduleIndex + 1} 页</span>
-                <button
-                  type="button"
-                  className="confirm-link danger"
-                  onClick={() => removeModule(moduleIndex)}
-                  disabled={busy || modules.length <= 1}
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 pw-scroll">
+        {busy && modules.length === 0 ? (
+          <GeneratingMark title="正在生成课程大纲" subtitle="正在理解你的需求…" />
+        ) : (
+          modules.map((module, moduleIndex) => (
+            <article
+              key={moduleIndex}
+              onDragOver={(event) => {
+                if (busy || draggingIndex === null) return
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'move'
+                if (dragOverIndex !== moduleIndex) setDragOverIndex(moduleIndex)
+              }}
+              onDragLeave={(event) => {
+                if (
+                  dragOverIndex === moduleIndex &&
+                  !event.currentTarget.contains(event.relatedTarget as Node | null)
+                ) {
+                  setDragOverIndex(null)
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                if (draggingIndex !== null) moveModule(draggingIndex, moduleIndex)
+                finishDrag()
+              }}
+              className={`pw-module rounded-2xl border bg-[var(--surface-2)] p-4 ${
+                draggingIndex === moduleIndex ? 'is-dragging' : ''
+              } ${dragOverIndex === moduleIndex && draggingIndex !== moduleIndex ? 'is-drag-over' : ''}`}
+            >
+              <div className="mb-3 flex items-center gap-2">
+                <span
+                  draggable={!busy}
+                  onDragStart={(event) => {
+                    setDraggingIndex(moduleIndex)
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', String(moduleIndex))
+                  }}
+                  onDragEnd={finishDrag}
+                  className="pw-drag-handle"
+                  title="拖动调整页面顺序"
+                  aria-label="拖动调整页面顺序"
                 >
-                  删除本页
-                </button>
-              </div>
-
-              {module.title.map((title, pointIndex) => (
-                <div className="confirm-point" key={pointIndex}>
-                  <input
-                    className="confirm-title-input"
-                    value={title}
-                    placeholder="知识点标题"
-                    disabled={busy}
-                    onChange={(e) => updatePoint(moduleIndex, pointIndex, 'title', e.target.value)}
-                  />
-                  <textarea
-                    className="confirm-context-input"
-                    value={module.context[pointIndex] ?? ''}
-                    placeholder="口播讲稿（可直接朗读的连贯讲述）"
-                    rows={3}
-                    disabled={busy}
-                    onChange={(e) => updatePoint(moduleIndex, pointIndex, 'context', e.target.value)}
-                  />
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="5" cy="3" r="1.25" />
+                    <circle cx="11" cy="3" r="1.25" />
+                    <circle cx="5" cy="8" r="1.25" />
+                    <circle cx="11" cy="8" r="1.25" />
+                    <circle cx="5" cy="13" r="1.25" />
+                    <circle cx="11" cy="13" r="1.25" />
+                  </svg>
+                </span>
+                <span className="pw-page-index">第 {moduleIndex + 1} 页</span>
+                {module.isNew ? (
                   <button
                     type="button"
-                    className="confirm-link danger"
-                    onClick={() => removePoint(moduleIndex, pointIndex)}
-                    disabled={busy || module.title.length <= 1}
+                    title="删除新增页面"
+                    aria-label="删除新增页面"
+                    disabled={busy}
+                    onClick={() => removeModule(moduleIndex)}
+                    className="ml-auto flex h-6 w-6 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[16px] leading-none text-[var(--text-dim)] transition hover:border-[#F0C4C0] hover:bg-[#FDECEC] hover:text-[#B3261E] disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    删除知识点
+                    ×
                   </button>
-                </div>
-              ))}
+                ) : null}
+              </div>
 
-              <button
-                type="button"
-                className="confirm-link"
-                onClick={() => addPoint(moduleIndex)}
-                disabled={busy}
-              >
-                + 添加知识点
-              </button>
-            </div>
-          ))}
-        </div>
+              <label className="mb-2 block text-[12px] font-medium text-[var(--text-dim)]">
+                页面主题
+                <input
+                  className="pw-input mt-1 w-full rounded-xl border bg-[var(--bg)] px-3 py-2 text-[14px] text-[var(--text)] outline-none transition"
+                  value={module.title[0] ?? ''}
+                  placeholder="例如：什么是普朗克常量"
+                  disabled={busy}
+                  onChange={(event) => updateTitle(moduleIndex, event.target.value)}
+                />
+              </label>
 
-        <div className="confirm-actions">
-          <button type="button" className="ghost-btn" onClick={onCancel} disabled={busy}>
-            取消
-          </button>
-          <button type="button" className="primary-btn" onClick={handleConfirm} disabled={busy}>
-            {busy ? '正在生成…' : '确认并生成'}
-          </button>
-        </div>
+              <label className="block text-[12px] font-medium text-[var(--text-dim)]">
+                页面简介
+                <textarea
+                  className="pw-input mt-1 w-full resize-y rounded-xl border bg-[var(--bg)] px-3 py-2 text-[13px] leading-6 text-[var(--text)] outline-none transition"
+                  value={module.summary ?? ''}
+                  placeholder="例如：先认识普朗克常量是什么，再交待它想要解决的整体问题"
+                  rows={2}
+                  disabled={busy}
+                  onChange={(event) => updateModule(moduleIndex, { summary: event.target.value })}
+                />
+              </label>
+            </article>
+          ))
+        )}
       </div>
-    </div>
+
+      {errorMessage ? (
+        <p className="m-0 shrink-0 rounded-xl bg-[#FDECEC] px-3 py-2 text-[12px] text-[#B3261E]">
+          {errorMessage}
+        </p>
+      ) : null}
+
+      {!busy ? (
+        <div className="shrink-0 rounded-2xl border border-[var(--border)] bg-[var(--surface-hover)] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              className="cursor-pointer rounded-xl border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-[13px] font-medium text-[var(--text)] transition hover:border-[#7259E8] hover:text-[#5B45E0]"
+              onClick={addModule}
+            >
+              + 新建大纲
+            </button>
+            <button
+              type="button"
+              className="cursor-pointer rounded-xl border border-[#DAD4FF] bg-[#F5F2FF] px-3 py-2 text-[13px] font-medium text-[#5B45E0] transition hover:bg-[#EBE5FF] disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => onRegenerateOutline({ catalogList: modules })}
+              disabled={!canRegenerate}
+            >
+              重新生成大纲
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </section>
   )
 }

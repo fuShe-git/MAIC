@@ -46,6 +46,65 @@
   transform: translateX(-2px);
 }
 
+/* 第三段步骤指示：前两段已完成，当前高亮课件生成 */
+.gv-stage-head {
+  position: relative;
+  z-index: 1;
+  margin-top: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.gv-stage-steps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+.gv-stage-step {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(226, 232, 240, 0.65);
+}
+.gv-stage-step.is-done {
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #93c5fd;
+}
+.gv-stage-step.is-current {
+  border-color: rgba(139, 92, 246, 0.6);
+  background: rgba(139, 92, 246, 0.16);
+  color: #ddd6fe;
+  box-shadow: 0 0 24px -8px rgba(139, 92, 246, 0.8);
+}
+.gv-stage-line {
+  width: 26px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.14);
+}
+.gv-stage-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(680px, 90vw);
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.62);
+}
+.gv-stage-summary > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gv-stage-theme {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #c4b5fd;
+}
+
 /* 蓝 / 紫弥散光晕 */
 .gv-orb {
   position: absolute;

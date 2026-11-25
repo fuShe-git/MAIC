@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { cancelGeneration, chatStream, confirmOutline, retryFailedPages } from './api/chat'
+import { cancelGeneration, chatStream, generateCourse, retryFailedPages } from './api/chat'
 import type { ChatResponse, OutlineModule, ProgressEvent, ProgressStep } from './api/chat'
 import { getCourse } from './api/courses'
 import { generatedHtmlUrl, listGeneratedFiles } from './api/generated'
@@ -7,7 +7,10 @@ import type { GeneratedCourse } from './api/generated'
 import { listLlmConfigs } from './api/llmConfigs'
 import type { LlmConfig } from './api/llmConfigs'
 import { toPageItems } from './utils/courseContext'
-import ConfirmView from './components/ConfirmView'
+import { FALLBACK_THEMES, generateThemes } from './api/theme'
+import type { ThemeTemplate } from './api/theme'
+import PrepareWorkspace from './components/PrepareWorkspace'
+import type { OutlinePanelStatus, PrepareStep, ThemePanelStatus } from './components/PrepareWorkspace'
 import LecturePlayer from './components/LecturePlayer'
 import GeneratingView from './components/GeneratingView'
 import type { WaitStatus } from './components/GeneratingView'
@@ -104,24 +107,46 @@ function App() {
   const [prompt, setPrompt] = useState('')
   // 设置弹窗开关（首页右上角齿轮入口）
   const [settingsOpen, setSettingsOpen] = useState(false)
-  // 视图四态：home 首页 → waiting 等待页 → confirm 确认大纲 → player 课件页
-  const [view, setView] = useState<'home' | 'waiting' | 'confirm' | 'player'>('home')
-  const [busy, setBusy] = useState(false)
+  // 视图四态：home 首页 → prepare 准备台 → generating 生成进度 → player 课件页
+  const [view, setView] = useState<'home' | 'prepare' | 'generating' | 'player'>('home')
+  // 准备台内部阶段：prepare 停留前两步，generate 进入第三步课件生成
+  const [stage, setStage] = useState<'prepare' | 'generate'>('prepare')
+  // 准备台当前显示的步骤（受控，切步骤不会触发额外渲染）
+  const [prepareStep, setPrepareStep] = useState<PrepareStep>('outline')
   const [wait, setWait] = useState<WaitState>(INITIAL_WAIT)
   const [lecture, setLecture] = useState<ChatResponse | null>(null)
   // 会话 id：每次生成固定一个，失败页重试靠它定位产物快照
   const [sessionId] = useState(() => `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`)
-  // 等待人工确认的大纲 + 图线程 id（confirm 视图数据源）
+  // 准备工作台：大纲与 PPT 样式各自独立加载、调试
   const [pendingOutline, setPendingOutline] = useState<OutlineModule[]>([])
+  const [outlineDraft, setOutlineDraft] = useState<OutlineModule[]>([])
   const [threadId, setThreadId] = useState('')
-  // 当前进行中的流；返回首页/中断时用它 abort（中断请求）
+  const [outlineStatus, setOutlineStatus] = useState<OutlinePanelStatus>('loading')
+  const [outlineError, setOutlineError] = useState('')
+  const [themes, setThemes] = useState<ThemeTemplate[]>([])
+  const [themeStatus, setThemeStatus] = useState<ThemePanelStatus>('loading')
+  const [themeError, setThemeError] = useState('')
+  const [selectedThemeId, setSelectedThemeId] = useState('')
+  const [courseTitle, setCourseTitle] = useState('')
+  // 准备阶段两条任务分别取消；课件生成阶段复用 abortRef/runIdRef 通知后端取消
+  const outlineAbortRef = useRef<AbortController | null>(null)
+  const themeAbortRef = useRef<AbortController | null>(null)
+  const outlineRunIdRef = useRef('')
+  const outlineSettledRef = useRef(false)
+  const sourceMessageRef = useRef('')
+  const streamModeRef = useRef<'outline' | 'course'>('outline')
   const abortRef = useRef<AbortController | null>(null)
-  // 当前生成任务 id：中断时用它通知后端真正取消后台任务
   const runIdRef = useRef('')
-  // 讲解主题暂存：handleEvent 闭包里的 wait 会过期，done 事件取 topic 用 ref
   const topicRef = useRef('')
-  // 本轮流是否已收到终态事件（done/reply/error/confirm/retry-done）：断流兜底判据
   const settledRef = useRef(false)
+  const busy =
+    (view === 'prepare' &&
+      stage === 'prepare' &&
+      (outlineStatus === 'loading' ||
+        outlineStatus === 'regenerating' ||
+        themeStatus === 'loading' ||
+        themeStatus === 'regenerating')) ||
+    (stage === 'generate' && (wait.status === 'running' || wait.status === 'retrying'))
   // 首页生成记录：videos 目录下的全部课件
   const [generated, setGenerated] = useState<GeneratedCourse[]>([])
   const [generatedLoaded, setGeneratedLoaded] = useState(false)
@@ -243,24 +268,41 @@ function App() {
   useEffect(() => {
     const notifyCancel = () => {
       const runId = runIdRef.current
+      const outlineRunId = outlineRunIdRef.current
+      outlineAbortRef.current?.abort()
+      themeAbortRef.current?.abort()
       if (runId) cancelGeneration(runId, true).catch(() => {})
+      if (outlineRunId) cancelGeneration(outlineRunId, true).catch(() => {})
     }
     window.addEventListener('pagehide', notifyCancel)
     return () => window.removeEventListener('pagehide', notifyCancel)
   }, [])
 
-  /** 把单条 SSE 进度事件映射到等待页状态 */
+  /** 把单条 SSE 进度事件映射到当前流：准备阶段只关心大纲终态，生成阶段关心完整进度 */
   function handleEvent(event: ProgressEvent) {
-    if (event.step === 'confirm' && event.catalogList) {
-      // 大纲产出后停在 interrupt：进入人工确认视图（编辑后继续，或取消）
-      settledRef.current = true
-      setPendingOutline(event.catalogList)
-      setThreadId(event.threadId ?? '')
-      setView('confirm')
+    if (streamModeRef.current === 'outline') {
+      if (event.step === 'confirm' && event.catalogList) {
+        outlineSettledRef.current = true
+        outlineRunIdRef.current = ''
+        setPendingOutline(event.catalogList)
+        setOutlineDraft(event.catalogList)
+        setThreadId(event.threadId ?? '')
+        setOutlineStatus('ready')
+        setOutlineError('')
+        setView('prepare')
+        return
+      }
+      if (event.step === 'reply' || event.step === 'error' || event.step === 'done') {
+        outlineSettledRef.current = true
+        outlineRunIdRef.current = ''
+        setOutlineStatus('error')
+        setOutlineError(event.message || '没有识别到需要讲解的主题，请换一种说法后重试')
+      }
+      // 准备阶段不展示 check/safety/topic 等过程进度
       return
     }
     if (event.step === 'confirm') {
-      // 取消收尾的 confirm/done 通知（无大纲），无需处理
+      // 课件生成流里的 confirm 是收尾通知，无需处理
       return
     }
     if (event.step === 'retry') {
@@ -341,50 +383,124 @@ function App() {
     }))
   }
 
-  /** 发起一次生成：立即进等待页，流式接收进度 */
-  function startGeneration(text: string) {
-    if (!text || busy) return
+  /** 取消准备阶段的大纲流（含后端任务） */
+  function cancelOutlineTask() {
+    const runId = outlineRunIdRef.current
+    outlineAbortRef.current?.abort()
+    outlineAbortRef.current = null
+    outlineRunIdRef.current = ''
+    if (runId) cancelGeneration(runId, true).catch(() => {})
+  }
+
+  /** 取消准备阶段的样式请求 */
+  function cancelThemeTask() {
+    themeAbortRef.current?.abort()
+    themeAbortRef.current = null
+  }
+
+  /** 发起/重新发起大纲流：只跑到大纲确认事件即停 */
+  function runOutlineStream(
+    message: string,
+    mode: 'loading' | 'regenerating',
+    options?: { topic?: string; outlineHint?: string },
+  ) {
+    cancelOutlineTask()
     const controller = new AbortController()
     const runId = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-    abortRef.current = controller
-    runIdRef.current = runId
-    setBusy(true)
+    outlineAbortRef.current = controller
+    outlineRunIdRef.current = runId
+    outlineSettledRef.current = false
+    streamModeRef.current = 'outline'
+    setOutlineStatus(mode)
+    setOutlineError('')
+
+    // modelId 为「系统默认」时后端会回退 .env 的默认模型
+    chatStream(
+      {
+        message,
+        sessionId,
+        runId,
+        modelId,
+        autoConfirm: false,
+        outlineOnly: mode === 'regenerating',
+        topic: options?.topic,
+        outlineHint: options?.outlineHint,
+      },
+      handleEvent,
+      controller.signal,
+    )
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setOutlineStatus('error')
+        setOutlineError(err instanceof Error ? err.message : '大纲生成失败，请调整主题后重试')
+      })
+      .then(() => {
+        if (controller.signal.aborted || outlineSettledRef.current) return
+        setOutlineStatus('error')
+        setOutlineError('大纲生成连接已断开，请重新生成')
+      })
+      .finally(() => {
+        if (outlineAbortRef.current === controller) outlineAbortRef.current = null
+        if (outlineRunIdRef.current === runId) outlineRunIdRef.current = ''
+      })
+  }
+
+  /** 发起/重新发起 PPT 样式生成，失败时用内置模板兜底但不开放开始按钮 */
+  function runThemeRequest(payload: { message: string; feedback?: string; currentThemes?: ThemeTemplate[] }, mode: 'loading' | 'regenerating') {
+    cancelThemeTask()
+    const controller = new AbortController()
+    themeAbortRef.current = controller
+    setThemeStatus(mode)
+    setThemeError('')
+
+    generateThemes({ ...payload, modelId }, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return
+        const list = response.themes?.length ? response.themes : FALLBACK_THEMES
+        setThemes(list)
+        if (response.degraded || list === FALLBACK_THEMES) {
+          setThemeStatus('error')
+          setThemeError('样式生成失败，已展示内置模板；输入意见后可重试')
+          setSelectedThemeId('')
+          return
+        }
+        setThemeStatus('ready')
+        setSelectedThemeId((prev) => (prev && list.some((item) => item.id === prev) ? prev : (list[0]?.id ?? '')))
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        setThemes(FALLBACK_THEMES)
+        setThemeStatus('error')
+        setThemeError(
+          `样式生成失败，已展示内置模板；输入意见后可重试（${err instanceof Error ? err.message : '网络异常'}）`,
+        )
+        setSelectedThemeId('')
+      })
+      .finally(() => {
+        if (themeAbortRef.current === controller) themeAbortRef.current = null
+      })
+  }
+
+  /** 首页提交：进入准备工作台，大纲与样式并发生成 */
+  function startGeneration(text: string) {
+    const message = text.trim()
+    if (!message || busy) return
+    sourceMessageRef.current = message
+    setCourseTitle(message)
     setLecture(null)
     setPendingOutline([])
+    setOutlineDraft([])
     setThreadId('')
+    setThemes([])
+    setSelectedThemeId('')
+    setThemeError('')
     topicRef.current = ''
     settledRef.current = false
     setWait(INITIAL_WAIT)
-    setView('waiting')
+    setView('prepare')
 
-    // modelId 为「系统默认」时后端会回退 .env 的默认模型
-    chatStream({ message: text, sessionId, runId, modelId }, handleEvent, controller.signal)
-      .catch((err: unknown) => {
-        // 用户主动返回首页触发的中断不按错误处理
-        if (controller.signal.aborted) return
-        setWait((prev) => ({
-          ...prev,
-          status: 'failed',
-          message: err instanceof Error ? err.message : '网络异常，请稍后重试',
-        }))
-      })
-      .then(() => {
-        // 流正常结束但始终没等到终态事件（异常断流）：兜底按失败展示，避免一直卡在进行中；
-        // confirm 等终态事件会切走视图且 settledRef 已置位，不误判为断流
-        if (controller.signal.aborted || settledRef.current) return
-        setWait((prev) =>
-          prev.status === 'running' || prev.status === 'retrying'
-            ? { ...prev, status: 'failed', message: '连接已断开，请重新生成' }
-            : prev,
-        )
-      })
-      .finally(() => {
-        if (abortRef.current === controller) {
-          abortRef.current = null
-          runIdRef.current = ''
-          setBusy(false)
-        }
-      })
+    runOutlineStream(message, 'loading')
+    runThemeRequest({ message }, 'loading')
   }
 
   function handleSubmit() {
@@ -409,42 +525,117 @@ function App() {
     return runId
   }
 
-  /** 等待页「返回首页 / 返回」：中断前后端并复位 */
+  /** 返回首页：准备阶段两条任务与生成阶段任务全部取消并复位 */
   function handleBackToHome() {
+    cancelOutlineTask()
+    cancelThemeTask()
     cancelActiveRun()
-    setBusy(false)
     setLecture(null)
+    setPendingOutline([])
+    setOutlineDraft([])
+    setThreadId('')
+    setThemes([])
+    setSelectedThemeId('')
     setWait(INITIAL_WAIT)
+    setStage('prepare')
+    setPrepareStep('outline')
     setView('home')
   }
 
-  /** 等待页「中断生成」：中断前后端，停留在等待页展示「已中断」 */
+  /**
+   * 第三步「停止生成」：中断前后端任务并回到准备阶段（即开始生成前的状态），
+   * 用户可以回到前两步继续调整，然后再次开始生成。
+   */
   function handleInterruptGeneration() {
     cancelActiveRun()
-    setBusy(false)
-    setWait((prev) => ({ ...prev, status: 'interrupted', message: '你已中断本次生成' }))
+    setWait(INITIAL_WAIT)
+    setLecture(null)
+    // 旧线程的检查点里可能已经有半成品课件，下一次生成必须开新线程
+    setThreadId('')
+    topicRef.current = ''
+    settledRef.current = true
+    streamModeRef.current = 'outline'
+    setStage('prepare')
+    setPrepareStep('theme')
   }
 
-  /** 等待页「重新生成」：用同一段输入重新发起 */
+  /** 生成页「重新生成」：用同一段输入重新进入准备台 */
   function handleRetry() {
-    startGeneration(prompt.trim())
+    startGeneration(sourceMessageRef.current || prompt.trim())
   }
 
-  /** 确认视图「确认并生成」：携带编辑后的大纲恢复图执行，重新进等待页 */
-  function handleConfirmOutline(catalog: OutlineModule[]) {
-    if (!threadId || busy) return
+  /** 大纲编辑实时落到草稿，切步骤时不会丢失手动修改 */
+  const handleOutlineDraftChange = useCallback((catalog: OutlineModule[]) => {
+    setOutlineDraft(catalog)
+  }, [])
+
+  /** 大纲面板「下一步」：保存当前大纲并切到主题选择 */
+  function handleOutlineConfirmed(catalog: OutlineModule[]) {
+    setPendingOutline(catalog)
+    setOutlineDraft(catalog)
+  }
+
+  /** 大纲面板「重新生成大纲」：把原始主题与用户新增页面一起交给模型重跑大纲流 */
+  function handleRegenerateOutline(payload: { catalogList: OutlineModule[] }) {
+    const topic = sourceMessageRef.current || courseTitle
+    const addedHints = payload.catalogList
+      .filter((module) => module.isNew)
+      .map((module, index) => {
+        const title = (module.title[0] ?? '').trim()
+        const summary = (module.summary ?? '').trim()
+        return `新增页面 ${index + 1}：主题「${title}」${summary ? `，简介「${summary}」` : ''}`
+      })
+    const parts = [
+      `请重新生成课程大纲。原始课程主题：${topic}`,
+      '整套课件必须围绕原始课程主题，不要缩窄成某个子玩法或具体条件；第 1 页应是该主题的整体入门。',
+      '请保留由浅入深的结构，title 与 context 等长，并为每个模块写出简介。',
+      '请把用户新增的页面纳入新大纲，并在对应模块中体现其主题与简介。',
+    ]
+    setPendingOutline([])
+    setOutlineDraft([])
+    setThreadId('')
+    runOutlineStream(parts.join('\n'), 'regenerating', {
+      topic,
+      outlineHint: addedHints.join('\n'),
+    })
+  }
+
+  /** 主题面板「重新生成主题」：把意见与当前候选一起交给模型调整 */
+  function handleRegenerateTheme(feedback: string) {
+    if (!feedback) return
+    runThemeRequest(
+      {
+        message: sourceMessageRef.current || courseTitle,
+        feedback,
+        currentThemes: themes,
+      },
+      'regenerating',
+    )
+  }
+
+  /**
+   * 主题面板「开始生成课件」：用当前大纲与所选样式生成。
+   * 每次都用新线程，避免停止生成后恢复旧线程带回上一次的课件产物。
+   */
+  function handleStartGeneration() {
+    const theme = themes.find((item) => item.id === selectedThemeId)
+    const outlineList = outlineDraft.length ? outlineDraft : pendingOutline
+    if (view !== 'prepare' || !theme || !outlineList.length || busy) return
     const controller = new AbortController()
     const runId = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     abortRef.current = controller
     runIdRef.current = runId
-    setBusy(true)
-    setPendingOutline([])
+    const topic = sourceMessageRef.current || courseTitle || theme.name
+    topicRef.current = topic
+    streamModeRef.current = 'course'
     settledRef.current = false
     setWait(INITIAL_WAIT)
-    setView('waiting')
+    setLecture(null)
+    setStage('generate')
+    setPrepareStep('generate')
 
-    confirmOutline(
-      { threadId, catalogList: catalog, confirmed: true, runId, modelId },
+    generateCourse(
+      { topic, catalogList: outlineList, theme, sessionId, runId, modelId },
       handleEvent,
       controller.signal,
     )
@@ -468,35 +659,23 @@ function App() {
         if (abortRef.current === controller) {
           abortRef.current = null
           runIdRef.current = ''
-          setBusy(false)
         }
       })
   }
 
-  /** 确认视图「取消」：通知后端取消本次生成，回首页 */
-  function handleCancelOutline() {
-    if (threadId && !busy) {
-      confirmOutline({ threadId, confirmed: false, modelId }, () => {}).catch((err: unknown) => {
-        console.error('取消生成失败：', err)
-      })
-    }
-    setPendingOutline([])
-    setThreadId('')
-    setView('home')
-  }
-
-  /** 结果页「重试失败页」：图外直调重跑，进度复用等待页的 retrying 态 */
+  /** 结果页「重试失败页」：图外直调重跑，沿用最初选择的 PPT 样式 */
   function handleRetryFailed() {
     if (busy) return
+    const theme = themes.find((item) => item.id === selectedThemeId)
     const controller = new AbortController()
     const runId = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     abortRef.current = controller
     runIdRef.current = runId
-    setBusy(true)
+    streamModeRef.current = 'course'
     settledRef.current = false
     setWait((prev) => ({ ...prev, status: 'retrying', step: 'retry', message: '正在重试失败的页面…' }))
 
-    retryFailedPages({ sessionId, runId, modelId }, handleEvent, controller.signal)
+    retryFailedPages({ sessionId, runId, modelId, theme }, handleEvent, controller.signal)
       .catch((err: unknown) => {
         if (controller.signal.aborted) return
         setWait((prev) => ({
@@ -517,12 +696,11 @@ function App() {
         if (abortRef.current === controller) {
           abortRef.current = null
           runIdRef.current = ''
-          setBusy(false)
         }
       })
   }
 
-  /** 等待页「开始学习」：进入课件播放页 */
+  /** 生成页「进入课堂」：进入课件播放页 */
   function handleStart() {
     if (!lecture) return
     setView('player')
@@ -559,6 +737,8 @@ function App() {
   function handleBackFromPlayer() {
     setLecture(null)
     setWait(INITIAL_WAIT)
+    setStage('prepare')
+    setPrepareStep('outline')
     setView('home')
   }
 
@@ -584,13 +764,42 @@ function App() {
     setModelMenuOpen((prev) => !prev)
   }
 
-  if (view === 'confirm') {
+  if (view === 'prepare') {
     return (
-      <ConfirmView
+      <PrepareWorkspace
+        courseTitle={courseTitle}
         catalogList={pendingOutline}
-        onConfirm={handleConfirmOutline}
-        onCancel={handleCancelOutline}
-        busy={busy}
+        outlineStatus={outlineStatus}
+        outlineError={outlineError}
+        themes={themes}
+        themeStatus={themeStatus}
+        themeError={themeError}
+        selectedThemeId={selectedThemeId}
+        outlineDraft={outlineDraft}
+        onBack={handleBackToHome}
+        onOutlineDraftChange={handleOutlineDraftChange}
+        onOutlineConfirmed={handleOutlineConfirmed}
+        onRegenerateOutline={handleRegenerateOutline}
+        onSelectTheme={setSelectedThemeId}
+        onRegenerateTheme={handleRegenerateTheme}
+        onStartGeneration={handleStartGeneration}
+        activeStep={prepareStep}
+        onStepChange={setPrepareStep}
+        generating={stage === 'generate'}
+        generation={{
+          status: wait.status,
+          step: wait.step,
+          pagesCurrent: wait.pagesCurrent,
+          pagesTotal: wait.pagesTotal,
+          audioCurrent: wait.audioCurrent,
+          audioTotal: wait.audioTotal,
+          message: wait.message,
+        }}
+        lecture={lecture}
+        onInterruptGeneration={handleInterruptGeneration}
+        onStartLecture={handleStart}
+        onRetryFailed={handleRetryFailed}
+        onRetryGeneration={handleRetry}
       />
     )
   }
@@ -610,7 +819,7 @@ function App() {
     )
   }
 
-  if (view === 'waiting') {
+  if (view === 'generating') {
     return (
       <GeneratingView
         status={wait.status}
@@ -621,6 +830,8 @@ function App() {
         audioTotal={wait.audioTotal}
         message={wait.message}
         topic={wait.topic}
+        courseTitle={courseTitle}
+        themeName={themes.find((item) => item.id === selectedThemeId)?.name}
         lecture={lecture}
         onBack={handleBackToHome}
         onInterrupt={handleInterruptGeneration}

@@ -8,7 +8,8 @@
 
 对外接口：
 - run_classroom(user_issue, ...)：跑一整条生成链路，既有调用 run_classroom(msg) 不变；
-- resume_classroom(thread_id, answer)：人工确认后恢复执行。
+- resume_classroom(thread_id, answer)：人工确认后恢复执行；
+- start_classroom(topic, catalog_list, theme)：用已确认的大纲/样式新开线程生成课件。
 """
 
 from typing import Optional
@@ -78,6 +79,9 @@ async def run_classroom(
     auto_confirm: bool = True,
     history: Optional[list] = None,
     session_id: str = "",
+    outline_only: bool = False,
+    topic: Optional[str] = None,
+    outline_hint: Optional[str] = None,
 ) -> dict:
     """跑一整条生成链路，返回最终状态（含 courseHtml / videoUrl 等）。
 
@@ -85,7 +89,9 @@ async def run_classroom(
     - auto_confirm：True 跳过人工确认（默认，既有 POST /chat 行为不变）；
       False 时大纲产出后图停在 interrupt，最终状态带 __interrupt__；
     - history：多轮会话历史 [{role, content}]，供意图识别；
-    - session_id：会话 id，产物快照的键。
+    - session_id：会话 id，产物快照的键；
+    - outline_only：True 时跳过查询改写与检索，只跑安全校验 + 大纲生成；
+    - topic / outline_hint：重生成大纲时的真实主题与用户补充要求，避免把整段指令当成主题。
     """
     tid = (thread_id or "").strip() or uuid4().hex
     config = {"configurable": {"thread_id": tid}}
@@ -93,7 +99,8 @@ async def run_classroom(
         "userIssue": user_issue,
         "needLecture": True,
         "reply": "",
-        "topic": "",
+        "topic": (topic or "").strip() or user_issue,
+        "outlineHint": (outline_hint or "").strip(),
         "catalogList": [],
         "audioList": [],
         "pageList": [],
@@ -101,16 +108,66 @@ async def run_classroom(
         "videoUrl": "",
         "history": [dict(item) for item in (history or [])],
         "sessionId": (session_id or "").strip(),
-        "intent": "",
+        "intent": "new_lecture" if outline_only else "",
         "reviseInds": [],
         "courseId": "",
         "outlineConfirmed": False,
+        "selectedTheme": {},
         "autoConfirm": bool(auto_confirm),
         "failMessage": "",
         "threadId": tid,
         "outputUnsafe": False,
         "dispatch": [],
         "pageTargets": [],
+        "stageDone": (
+            {"intent": True, "query": True, "research": True} if outline_only else {}
+        ),
+    }
+    return await classroom_graph.ainvoke(initial, config=config)
+
+
+async def start_classroom(
+    topic: str,
+    catalog_list: list,
+    theme: Optional[dict] = None,
+    *,
+    session_id: str = "",
+    history: Optional[list] = None,
+) -> dict:
+    """用用户最终确认的大纲 + 样式直接开新线程生成课件。
+
+    停止生成后再次生成时走这里：旧线程的检查点（checkpoint）里还留着上一次的
+    产物，恢复旧线程会把旧课件当成新结果返回，所以必须新建线程，并跳过
+    意图/查询/检索/大纲四个已经由用户完成的阶段。
+    """
+    tid = uuid4().hex
+    config = {"configurable": {"thread_id": tid}}
+    initial: SimpleState = {
+        "userIssue": topic,
+        "needLecture": True,
+        "reply": "",
+        "topic": topic,
+        "outlineHint": "",
+        "catalogList": [dict(item) for item in (catalog_list or []) if isinstance(item, dict)],
+        "audioList": [],
+        "pageList": [],
+        "courseHtml": "",
+        "videoUrl": "",
+        "history": [dict(item) for item in (history or [])],
+        "sessionId": (session_id or "").strip(),
+        "intent": "new_lecture",
+        "reviseInds": [],
+        "courseId": "",
+        # 大纲与样式已由用户在确认页给出：跳过人工确认，直接进 page/audio
+        "outlineConfirmed": True,
+        "selectedTheme": theme or {},
+        "autoConfirm": True,
+        "failMessage": "",
+        "threadId": tid,
+        "outputUnsafe": False,
+        "dispatch": [],
+        "pageTargets": [],
+        "stageDone": {"intent": True, "query": True, "research": True, "outline": True},
     }
     return await classroom_graph.ainvoke(initial, config=config)
 

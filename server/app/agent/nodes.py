@@ -173,26 +173,26 @@ SAFETY_PROMPT = """你是 MAIC 的内容安全审核助手，负责判断一段�
 OUTLINE_PROMPT = """你是 MAIC（多智能体互动课堂）的课件策划，负责把一个主题拆成「由浅入深」的讲解大纲，并写出可以直接念出来的口播讲稿。
 
 要求：
-1. 拆成 3~5 个模块，模块之间严格由浅入深：先讲「是什么、怎么玩」，再讲细节与技巧，最后讲进阶策略或常见误区；
-2. 每个模块含 1~3 个知识点：title 是知识点标题（简短名词短语，8 字以内）；
-3. context 是讲解这个知识点的口播讲稿（90~160 字），必须是连贯的一句话接一句话的口语讲述，不是要点罗列：
+1. 必须紧扣用户给出的讲解主题：整套课件标题和每个模块都服务这个主题本身，不能擅自缩窄成某个子玩法、具体条件或换成别的主题；若主题是某款游戏的玩法，第 1 个模块必须是该游戏玩法的整体入门，不能直接跳到某个具体规则；
+2. 拆成 3~5 个模块，模块之间严格由浅入深：先讲「是什么、怎么玩」，再讲细节与技巧，最后讲进阶策略或常见误区；
+3. 每个模块含 1~3 个知识点：title 是知识点标题（简短名词短语，8 字以内）；
+4. 每个模块还要有 summary，用 20~40 字说明本页要讲清楚什么，写在卡片简介里，不要照搬讲稿原句；
+5. context 是讲解这个知识点的口播讲稿（90~160 字），必须是连贯的一句话接一句话的口语讲述，不是要点罗列：
    - 开头一句话承接：第 1 个知识点先引入本页话题，之后每个知识点都先接住上一个（例如「座次搞清楚了，再来看入席时的顺序」），不要从半空中重新起头；
    - 中间把要点讲清楚，允许在收尾前补一句适度延伸，用一个小例子、一个类比或一个常见误区帮助理解，点到为止，不要展开成段；
    - 最后一句自然收束，让人能顺着往下听；
    - 每个模块的第 1 条 context 要用一句话接住上一个模块，第 1 个模块负责整堂课的引入；
    - 全部模块合计最多出现一次「注意这里」这类口头提醒；不要出现任何提问式互动（例如「你有没有想过」「大家想一想」）；
    - 只用口语和中文标点：不要 markdown 符号、不要括号注释、不要编号前缀、不要项目符号；
-4. title 与 context 必须等长且一一对应（第 i 个 context 讲的就是第 i 个 title）；
-5. ind 从 1 开始连续编号；
-6. 资料只作为事实依据，不要原文照抄；资料与主题无关时忽略它，用你自己的知识。
+6. title 与 context 必须等长且一一对应（第 i 个 context 讲的就是第 i 个 title）；
+7. ind 从 1 开始连续编号；
+8. 资料只作为事实依据，不要原文照抄；资料与主题无关时忽略它，用你自己的知识。
 
 输出要求：只输出 JSON，不要解释文字，不要代码块围栏，不要输出 HTML。
 示例：
-{"catalogList": [{"ind": 1, "title": ["什么是三国杀", "身份与胜负"], "context": ["咱们先从最基础的开始。三国杀是一款以三国为背景的桌面卡牌游戏，玩家各挑一名武将，用手里的卡牌互相攻击、防御和辅助，把这一层想通，后面的规则才好落地。", "明白玩法了，再看输赢怎么算。每名玩家开局都藏着一个身份，主公和忠臣要清掉反贼和内奸，反贼则要击杀主公。注意这里，内奸得先帮着主公清场，最后再单独取胜，这是新手最容易搞混的地方。"]}, {"ind": 2, "title": ["回合流程"], "context": ["身份和胜负心里有数了，我们接着看一个回合怎么走。一个回合依次走判定、摸牌、出牌、弃牌四个阶段，摸牌阶段固定摸两张，出牌阶段可以按手里的牌自由使用。记住这个顺序，你就能判断什么时候该攒牌、什么时候该出手。"]}]}"""
+{"catalogList": [{"ind": 1, "summary": "先认识游戏的身份构成与胜负目标", "title": ["什么是三国杀", "身份与胜负"], "context": ["咱们先从最基础的开始。三国杀是一款以三国为背景的桌面卡牌游戏，玩家各挑一名武将，用手里的卡牌互相攻击、防御和辅助，把这一层想通，后面的规则才好落地。", "明白玩法了，再看输赢怎么算。每名玩家开局都藏着一个身份，主公和忠臣要清掉反贼和内奸，反贼则要击杀主公。注意这里，内奸得先帮着主公清场，最后再单独取胜，这是新手最容易搞混的地方。"]}, {"ind": 2, "summary": "按判定、摸牌、出牌、弃牌四阶段理解一个回合", "title": ["回合流程"], "context": ["身份和胜负心里有数了，我们接着看一个回合怎么走。一个回合依次走判定、摸牌、出牌、弃牌四个阶段，摸牌阶段固定摸两张，出牌阶段可以按手里的牌自由使用。记住这个顺序，你就能判断什么时候该攒牌、什么时候该出手。"]}]}"""
 
-PAGE_PROMPT = """你是 MAIC 的课件前端，负责把一页口播讲稿提炼成要点，再渲染成一个简约风格的 HTML 页面。
-
-视觉规范（必须遵守，整体是暖色简约风）：
+DEFAULT_VISUAL_STYLE = """视觉规范（必须遵守，整体是暖色简约风）：
 1. 画布：宽度 100%，最大 1040px，aspect-ratio 16 / 9，背景 #FEFAF3，内边距 44px 56px，圆角 12px，
    字体 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif，整体在页面中水平垂直居中；
 2. 顶部：主标题（橙色 #E4620B，约 34px 加粗）+ 一行灰色副标题（#8C8C8C，约 17px，用于点明本页定位）；
@@ -201,7 +201,11 @@ PAGE_PROMPT = """你是 MAIC 的课件前端，负责把一页口播讲稿提炼
    超大加粗橙色文字（约 42px），下方可配一行辅助说明（约 20px，可用拼音、英文或一句解释）；
    右栏是 2~3 个信息条：浅黄底 #FFF9EA、圆角 6px，每条一个橙色小标题（约 18px 加粗）
    + 深灰正文（#4A4A4A，约 15px，行高 1.75），可用「·」分隔或圆点列表；
-4. 底部：橙色 #EC6520 通栏横幅，白色居中大字（约 20px，字间距 2px），写一句本页的总结口号；
+4. 底部：橙色 #EC6520 通栏横幅，白色居中大字（约 20px，字间距 2px），写一句本页的总结口号；"""
+
+PAGE_PROMPT_TEMPLATE = """你是 MAIC 的课件前端，负责把一页口播讲稿提炼成要点，再渲染成 HTML 页面。
+
+{visual_style}
 5. 只用 HTML + 内联 <style>，禁止 <script>、禁止外链字体与图片，禁止 markdown 代码块围栏；
 6. 整页内容必须在一屏内完整装下：不得出现纵向滚动条，不得有任何文字或模块被视口裁切，
    文案多时优先精简文字，其次压缩字号与间距（字号不低于 13px、行高不低于 1.5）；
@@ -215,6 +219,8 @@ PAGE_PROMPT = """你是 MAIC 的课件前端，负责把一页口播讲稿提炼
    页面写成「主位正对门口 · 主宾居右 · 其余按身份年龄排开」，而不是照搬整句。
 
 输出要求：直接输出完整 HTML 文档（以 <html> 开头、</html> 结尾），不要任何解释文字。"""
+
+PAGE_PROMPT = PAGE_PROMPT_TEMPLATE.format(visual_style=DEFAULT_VISUAL_STYLE)
 
 # RAG 召回的条数
 RAG_TOP_K = 6
@@ -243,6 +249,36 @@ PAGE_BASE_STYLE = """
     .slide .footer { background: #EC6520; color: #FFFFFF; text-align: center; font-size: 20px; letter-spacing: 2px;
                      padding: 12px; margin-top: 24px; border-radius: 4px; }
 """
+
+
+def _theme_css(theme: Optional[dict]) -> str:
+    """把用户所选样式转成后置 CSS；颜色由 theme_agent 校验为 6 位十六进制。"""
+    if not isinstance(theme, dict) or not theme.get("previewColors"):
+        return ""
+    colors = theme.get("previewColors") or {}
+    background = str(colors.get("background") or "#FFFFFF")
+    primary = str(colors.get("primary") or "#2F5BEA")
+    accent = str(colors.get("accent") or primary)
+    text = str(colors.get("text") or "#1E1F29")
+    return f"""
+    .slide {{ background: {background}; }}
+    .slide h1, .slide .hero .term, .slide .hero .hint, .slide .card h3 {{ color: {primary}; }}
+    .slide .subtitle {{ color: {text}; opacity: .66; }}
+    .slide .hero {{ background: {background}; border-left: 6px solid {accent}; }}
+    .slide .card {{ background: #FFFFFF; border-left: 4px solid {accent}; }}
+    .slide .card p {{ color: {text}; }}
+    .slide .footer {{ background: {primary}; color: #FFFFFF; }}
+"""
+
+
+def _visual_style(theme: Optional[dict]) -> str:
+    """用户选了样式时替换默认视觉规范，否则保持旧流程不变。"""
+    if not isinstance(theme, dict):
+        return DEFAULT_VISUAL_STYLE
+    prompt = str(theme.get("stylePrompt") or "").strip()
+    if not prompt:
+        return DEFAULT_VISUAL_STYLE
+    return "本次课件视觉规范（优先于其他配色建议）：\n" + prompt
 
 ## 节点
 async def _invoke_text(system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
@@ -355,8 +391,16 @@ def _normalize_catalog(data: dict) -> list[CatalogModule]:
         count = min(len(titles), len(contexts))  # 以短的一侧为准，保证一一对应
         if count == 0:
             continue
+        summary = str(item.get("summary") or "").strip()[:120]
+        if not summary:
+            summary = f"围绕{'、'.join(titles[:count])}展开讲解，循序渐进理解本页重点。"
         catalog.append(
-            {"ind": len(catalog) + 1, "title": titles[:count], "context": contexts[:count]}
+            {
+                "ind": len(catalog) + 1,
+                "title": titles[:count],
+                "context": contexts[:count],
+                "summary": summary,
+            }
         )
     return catalog
 
@@ -414,14 +458,20 @@ async def _is_sanguosha_topic(topic: str) -> bool:
     return "三国杀" in topic
 
 
-async def _build_catalog(topic: str, docs: list[str]) -> list[CatalogModule]:
+async def _build_catalog(topic: str, docs: list[str], hint: str = "") -> list[CatalogModule]:
     """结合模型自身知识与 RAG 资料，按由浅入深的顺序生成大纲。"""
     if docs:
         material = "\n\n".join(f"[资料{i}] {doc}" for i, doc in enumerate(docs, 1))
     else:
         material = "（本次没有检索到资料，请完全依赖你自己的知识。）"
 
-    user_prompt = f"讲解主题：{topic}\n\n可参考的资料：\n{material}"
+    extra = f"\n\n用户对大纲的补充要求（必须融入新大纲）：\n{hint}" if hint else ""
+    user_prompt = (
+        f"讲解主题（必须逐字围绕，不可改写成子主题）：{topic}\n"
+        f"本堂课标题就是：{topic}\n\n"
+        f"可参考的资料：\n{material}"
+        f"{extra}"
+    )
     raw = await _invoke_text(OUTLINE_PROMPT, user_prompt, temperature=0.4)
     catalog = _normalize_catalog(_parse_json(raw))
 
@@ -432,20 +482,22 @@ async def _build_catalog(topic: str, docs: list[str]) -> list[CatalogModule]:
                 "ind": 1,
                 "title": [topic],
                 "context": [f"围绕「{topic}」的核心概念、基础流程与常见要点展开讲解。"],
+                "summary": f"从核心概念出发，理解「{topic}」的基础流程与常见要点。",
             }
         ]
     return catalog
 
 
-def _finish_html(fragment: str) -> str:
-    """把模型返回的 HTML 片段包成完整文档，样式沿用同一套简约风。"""
+def _finish_html(fragment: str, theme: Optional[dict] = None) -> str:
+    """把模型返回的 HTML 片段包成完整文档，主题样式以后置 CSS 覆盖默认样式。"""
+    style = PAGE_BASE_STYLE + _theme_css(theme)
     return (
         '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n'
-        f"<style>{PAGE_BASE_STYLE}</style>\n</head>\n<body>\n{fragment}\n</body>\n</html>"
+        f"<style>{style}</style>\n</head>\n<body>\n{fragment}\n</body>\n</html>"
     )
 
 
-def _fallback_page(topic: str, module: CatalogModule) -> str:
+def _fallback_page(topic: str, module: CatalogModule, theme: Optional[dict] = None) -> str:
     """兜底页面：模型没给出可用 HTML 时用固定模板渲染，保证每页都有内容。
 
     讲稿比页面要点长得多，这里用 _page_snippet 压到卡片容量内，避免降级时文字溢出。
@@ -468,7 +520,7 @@ def _fallback_page(topic: str, module: CatalogModule) -> str:
         '  <div class="footer">跟着大纲一步步来，理解比记忆更重要</div>\n'
         "</div>"
     )
-    return _finish_html(fragment)
+    return _finish_html(fragment, theme)
 
 
 def _clean_html(raw: str) -> str:
@@ -523,13 +575,15 @@ async def _build_page(
     module: CatalogModule,
     total: int,
     on_error: Optional[Callable[[Exception], None]] = None,
+    theme: Optional[dict] = None,
 ) -> str:
     """根据一个模块的大纲（口播讲稿）生成对应 HTML 页面，失败时回退到兜底模板。
 
     出口统一注入自适配脚本：任一路径（模型页 / 片段包装 / 兜底页）产出的
     页面在窄容器里溢出时都会自动缩回一屏内，不再出现滚动条和内容裁切。
-    on_error：页面降级到兜底模板时的回调（供 page_agent 上报失败清单），默认不通知。"""
-    return _inject_fit(await _build_page_raw(topic, module, total, on_error))
+    on_error：页面降级到兜底模板时的回调（供 page_agent 上报失败清单），默认不通知。
+    theme：用户所选 PPT 样式；空值时沿用默认暖色简约风。"""
+    return _inject_fit(await _build_page_raw(topic, module, total, on_error, theme))
 
 
 async def _build_page_raw(
@@ -537,32 +591,43 @@ async def _build_page_raw(
     module: CatalogModule,
     total: int,
     on_error: Optional[Callable[[Exception], None]] = None,
+    theme: Optional[dict] = None,
 ) -> str:
     """生成页面本体（不注入脚本），失败时回退到兜底模板。"""
     user_prompt = (
-        f"整套课件主题：{topic}\n"
+        f"整套课件主题（页面顶部课程名必须使用原文，不可改写或缩窄）：{topic}\n"
+        f"页面主标题写本页知识点，副标题点明它在整套课件中的位置；课程名始终以「整套课件主题」为准。\n"
         f"本页序号：第 {module['ind']} 页，共 {total} 页\n"
         f"本页口播讲稿（供你理解内容，不是页面文案，页面文字要从中提炼）：\n{_module_points(module)}\n\n"
         "请据此生成这一页的 HTML：主标题概括本页核心知识点，副标题点明本页在整套课件中的位置；"
         "卡片和横幅里的文字都要压缩成短语，不要照抄讲稿里的原句。"
     )
+    if isinstance(theme, dict) and theme.get("stylePrompt"):
+        colors = theme.get("previewColors") or {}
+        user_prompt += (
+            f"\n本次课件视觉规范：{theme['stylePrompt']}"
+            f"\n关键配色：背景 {colors.get('background', '')}、主色 {colors.get('primary', '')}、"
+            f"强调色 {colors.get('accent', '')}、正文 {colors.get('text', '')}。"
+        )
+    visual_style = _visual_style(theme)
+    page_prompt = PAGE_PROMPT_TEMPLATE.format(visual_style=visual_style)
     try:
-        raw = await _invoke_text(PAGE_PROMPT, user_prompt, temperature=0.5)
+        raw = await _invoke_text(page_prompt, user_prompt, temperature=0.5)
     except Exception as exc:
         logger.warning("第 %s 页生成失败，使用兜底模板：%s", module["ind"], exc)
         if on_error is not None:
             on_error(exc)
-        return _fallback_page(topic, module)
+        return _fallback_page(topic, module, theme)
 
     page = _clean_html(raw)
     if "<html" in page.lower():
         return page
     if page.startswith("<"):  # 模型只给了片段，补成完整文档
-        return _finish_html(page)
+        return _finish_html(page, theme)
     logger.warning("第 %s 页输出不像 HTML，使用兜底模板：%s", module["ind"], raw[:200])
     if on_error is not None:
         on_error(RuntimeError("模型输出不是可用的 HTML 页面"))
-    return _fallback_page(topic, module)
+    return _fallback_page(topic, module, theme)
 
 # 旧 text_organization_node 已拆为 agents/query_rewrite_agent.py、agents/research_agent.py、
 # agents/outline_agent.py、agents/page_agent.py

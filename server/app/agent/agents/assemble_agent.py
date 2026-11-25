@@ -14,6 +14,7 @@ import logging
 from datetime import datetime
 from html import escape
 from pathlib import Path
+from typing import Optional
 from uuid import uuid4
 
 from app.agent.nodes import OUTPUT_DIR, _emit
@@ -235,7 +236,7 @@ def _append_quiz_section(course_html: str, quiz_html: str) -> str:
     return course_html[:at] + quiz_html + "\n" + course_html[at:]
 
 
-def _build_quiz_only_page(topic: str, quiz_list: list[dict]) -> str:
+def _build_quiz_only_page(topic: str, quiz_list: list[dict], theme: Optional[dict] = None) -> str:
     """无历史课件时的独立测验页：单模块走既有组装函数（无音频），复用同一套播放器。"""
     from app.agent.nodes import _fallback_page
 
@@ -252,7 +253,7 @@ def _build_quiz_only_page(topic: str, quiz_list: list[dict]) -> str:
         "title": ["课后测验"],
         "context": ["下面是本课的练习题，做完再对答案，看看掌握得怎么样。"],
     }
-    pages[0]["htmlpage"] = _fallback_page(topic or "课后测验", module)
+    pages[0]["htmlpage"] = _fallback_page(topic or "课后测验", module, theme)
     course_html = build_course_html(topic or "课后测验", pages, [])
     return _append_quiz_section(course_html, _quiz_section(quiz_list, standalone=True))
 
@@ -267,12 +268,13 @@ async def assemble_agent(state: dict) -> dict:
     quiz_list = list(state.get("quizList") or [])
     intent = str(state.get("intent") or "new_lecture")
     session_id = state.get("sessionId") or ""
+    theme = state.get("selectedTheme") or {}
 
     _emit("assemble", "start", total=len(pages), message="正在组装课件…")
 
     # quiz_only：优先追加到历史课件，其次生成独立测验页
     if intent == "quiz_only":
-        result = await _assemble_quiz_only(topic, quiz_list, session_id)
+        result = await _assemble_quiz_only(topic, quiz_list, session_id, theme)
         _emit("assemble", "done", message="课件组装完成")
         return result
 
@@ -315,6 +317,7 @@ async def assemble_agent(state: dict) -> dict:
             "pageList": pages,
             "audioList": audios,
             "quizList": quiz_list,
+            "selectedTheme": theme,
             "courseId": uid,
             "courseHtml": str(course_path),
         },

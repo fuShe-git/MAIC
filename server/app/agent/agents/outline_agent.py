@@ -63,7 +63,12 @@ async def _continue_catalog(topic: str, docs: list[str], existing: list) -> list
 
     base = len(existing)
     combined = list(existing) + [
-        {"ind": base + i, "title": m["title"], "context": m["context"]}
+        {
+            "ind": base + i,
+            "title": m["title"],
+            "context": m["context"],
+            "summary": m.get("summary", ""),
+        }
         for i, m in enumerate(new_modules, 1)
     ]
     return combined
@@ -89,6 +94,7 @@ async def _revise_catalog(topic: str, docs: list[str], existing: list, revise_in
                 "ind": module["ind"],
                 "title": revised[0]["title"],
                 "context": revised[0]["context"],
+                "summary": revised[0].get("summary", module.get("summary", "")),
             }
         else:
             logger.warning("第 %s 页改写解析失败，保留原文：%s", module.get("ind"), raw)
@@ -101,6 +107,7 @@ async def outline_agent(state: dict) -> dict:
 
     _emit("outline", "start", message="正在生成大纲…")
     topic = (state.get("topic") or state.get("userIssue") or "").strip()
+    hint = str(state.get("outlineHint") or "").strip()
     docs = list(state.get("docs") or [])
     intent = str(state.get("intent") or "new_lecture")
     existing = list(state.get("catalogList") or [])
@@ -120,7 +127,7 @@ async def outline_agent(state: dict) -> dict:
         valid = [int(ind) for ind in (state.get("reviseInds") or [])]
         catalog = await _revise_catalog(topic, docs, existing, valid)
     else:
-        catalog = await _build_catalog(topic, docs)
+        catalog = await _build_catalog(topic, docs, hint)
 
     _emit("outline", "done", total=len(catalog))
     return {"catalogList": catalog, "stageDone": {"outline": True}}

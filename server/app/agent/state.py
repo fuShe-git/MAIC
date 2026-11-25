@@ -20,11 +20,23 @@ class CatalogModule(TypedDict):
 
     title 与 context 一一对应（第 i 个 title 的讲稿就是第 i 个 context），
     因此二者长度必须相等。context 是能直接朗读的口播讲稿，不是页面文案。
+    summary 是本页简介，用于确认页展示，不影响口播与页面生成。
     """
 
     ind: int            # 序号
     title: list[str]    # 该页面内各知识点的标题
     context: list[str]  # 与 title 一一对应的口播讲稿（90~160 字，口语连贯）
+    summary: str        # 本页简介（旧数据可能缺失，读取时用空串兜底）
+
+
+class ThemeTemplate(TypedDict):
+    """用户选择的 PPT 视觉样式；与页面明/暗主题是两套概念。"""
+
+    id: str
+    name: str
+    description: str
+    previewColors: dict
+    stylePrompt: str
 
 
 class AudioModule(TypedDict):
@@ -139,8 +151,10 @@ class SimpleState(TypedDict, total=False):
     sessionId: str           # 会话 id，多轮与快照的键
     intent: str              # new_lecture | continue | revise_page | quiz_only | chat
     reviseInds: list[int]    # revise_page 意图下要定向改写的模块 ind
+    outlineHint: str         # 重生成大纲时用户对大纲的补充要求（如新增页面）
     courseId: str            # quiz_only 追加的历史课件 id
     outlineConfirmed: bool   # 大纲是否已经过人工确认
+    selectedTheme: dict      # 用户确认大纲时选定的 PPT 样式；空字典表示沿用默认样式
     autoConfirm: bool        # True 跳过人工确认（默认，旧调用零破坏）
     failMessage: str         # 非空表示生成失败原因（主管短路 END 前写入）
     threadId: str            # LangGraph thread_id（检查点/恢复执行的键）

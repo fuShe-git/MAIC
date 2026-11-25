@@ -1,10 +1,19 @@
 import react from '@vitejs/plugin-react'
+import autoprefixer from 'autoprefixer'
+import tailwindcss from 'tailwindcss'
 import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  css: {
+    postcss: {
+      plugins: [tailwindcss(), autoprefixer()],
+    },
+  },
   server: {
+    host: '0.0.0.0',
+    allowedHosts: true,
     // 开发环境把 /api 开头的请求转发到 FastAPI，前端代码里就不用写完整域名
     proxy: {
       '/api': {

@@ -236,6 +236,9 @@ async def supervisor_node(state: dict) -> dict:
         updates.update(_cascade_clear())
         if isinstance(edited, list) and edited:
             updates["catalogList"] = edited
+        # 用户选定的 PPT 样式随确认一起恢复，后续 page_agent 会按它生成每页视觉。
+        if isinstance(answer.get("theme"), dict) and answer.get("theme"):
+            updates["selectedTheme"] = answer["theme"]
         updates["outlineConfirmed"] = True
 
         # 确认后直接重走 page/audio（保留既有快照不动）
@@ -359,4 +362,7 @@ def _cascade_clear() -> dict:
         },
         "pageTargets": [],
         "outputUnsafe": False,
+        # 停止后恢复旧线程时，不能把上一次的课件产物当成新结果返回
+        "courseHtml": "",
+        "videoUrl": "",
     }

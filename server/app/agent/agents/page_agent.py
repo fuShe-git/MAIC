@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 async def page_agent(state: dict) -> dict:
     """按大纲为每个模块生成 HTML 页面；产出 pageList 与失败清单。"""
     topic = (state.get("topic") or state.get("userIssue") or "").strip()
+    theme = state.get("selectedTheme") or {}
     catalog = list(state.get("catalogList") or [])
     if not catalog:
         return {"pageList": [], "stageDone": {"pages": True}}
@@ -55,7 +56,7 @@ async def page_agent(state: dict) -> dict:
             failures.append({"ind": ind, "stage": "pages", "error": str(exc)[:200]})
             _emit("pages", "failed", ind=ind, message=f"第 {ind} 页 · 页面生成失败")
 
-        page = await _build_page(topic, module, len(catalog), _on_error)
+        page = await _build_page(topic, module, len(catalog), _on_error, theme)
         pages_done += 1
         _emit("pages", "progress", current=pages_done, total=total)
         return ind, page

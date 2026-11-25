@@ -1,8 +1,9 @@
-"""对话接口（v4）：4 个接口共用一套 SSE 进度事件。
+"""对话接口（v4）：多个接口共用一套 SSE 进度事件。
 
 - POST /chat        一次性同步调用（既有行为不变）；
 - POST /chat/stream SSE 进度流（新增 confirm 终态、partial/failedPages 终态字段）；
 - POST /chat/confirm 人工确认大纲后恢复执行（SSE，interrupt 恢复）；
+- POST /chat/generate 用已确认的大纲/样式新开线程生成课件（SSE）；
 - POST /chat/retry  手动重试失败页（图外直调 agent + 重组装，不受 dispatch 上限约束）。
 
 进度事件结构：{step, status, current, total, message, data}，data 是各阶段的领域字段
@@ -23,7 +24,8 @@ from pydantic import BaseModel
 from app.agent import sessions
 from app.agent.agent import reset_llm_config, resolve_llm_config, set_llm_config
 from app.agent.agents.assemble_agent import _append_quiz_section, _quiz_section
-from app.agent.graph import is_interrupted, resume_classroom, run_classroom
+from app.agent.agents.theme_agent import generate_theme_templates
+from app.agent.graph import is_interrupted, resume_classroom, run_classroom, start_classroom
 from app.agent.nodes import (
     OUTPUT_DIR,
     _build_page,
@@ -73,6 +75,9 @@ class ChatRequest(BaseModel):
     sessionId: Optional[str] = None      # 多轮会话 id（可选）
     threadId: Optional[str] = None       # 图线程 id（confirm/retry 定位用，可选）
     autoConfirm: bool = True             # False 时大纲产出后等待人工确认
+    outlineOnly: bool = False            # True 时只做安全校验 + 大纲生成，跳过改写/检索
+    topic: Optional[str] = None          # 重生成大纲时的真实讲解主题；避免把操作指令当成主题
+    outlineHint: Optional[str] = None    # 重生成大纲时用户对大纲的补充要求（如新增页面）
     history: Optional[list] = None       # 多轮历史 [{role, content}]（可选）
     runId: Optional[str] = None          # 本次生成任务 id（中断/取消定位用）
     modelId: Optional[str] = None        # 所选模型「配置id:模型id」；空 / platform-default 用系统默认
@@ -90,12 +95,49 @@ class ChatResponse(BaseModel):
     courseId: str = ""
 
 
+class ThemePreviewColors(BaseModel):
+    background: str = "#FFFFFF"
+    primary: str = "#2F5BEA"
+    accent: str = "#6C8CFF"
+    text: str = "#1E1F29"
+
+
+class ThemeTemplatePayload(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    previewColors: ThemePreviewColors = ThemePreviewColors()
+    stylePrompt: str
+
+
+class ThemeRequest(BaseModel):
+    message: str                          # 用户最初输入的课程主题
+    feedback: Optional[str] = None        # 重新生成时的修改意见
+    currentThemes: Optional[list] = None  # 当前候选，便于定向调整
+    modelId: Optional[str] = None
+
+
+class ThemeListResponse(BaseModel):
+    themes: list[ThemeTemplatePayload]
+    degraded: bool = False                # True 表示服务端降级为内置样式
+
+
 class ConfirmRequest(BaseModel):
     threadId: str                        # 目标图线程 id
     catalogList: Optional[list] = None   # 用户编辑后的大纲
     confirmed: bool = True               # False 表示取消生成
     runId: Optional[str] = None          # 本次生成任务 id（中断/取消定位用）
     modelId: Optional[str] = None        # 所选模型（确认后继续生成仍沿用同一模型）
+    theme: Optional[dict] = None         # 用户选择的 PPT 样式，恢复后注入图状态
+
+
+class GenerateRequest(BaseModel):
+    topic: str                           # 用户最终确认的讲解主题
+    catalogList: Optional[list] = None   # 用户最终确认的大纲
+    theme: Optional[dict] = None         # 用户选择的 PPT 样式
+    sessionId: Optional[str] = None      # 产物快照的会话 id
+    runId: Optional[str] = None          # 本次生成任务 id（中断/取消定位用）
+    modelId: Optional[str] = None        # 所选模型
 
 
 class RetryRequest(BaseModel):
@@ -104,10 +146,28 @@ class RetryRequest(BaseModel):
     inds: Optional[list] = None          # 要重试的模块 ind；不传=重试全部失败页
     runId: Optional[str] = None          # 本次生成任务 id（中断/取消定位用）
     modelId: Optional[str] = None        # 所选模型（重试沿用同一模型）
+    theme: Optional[dict] = None         # 失败页重试沿用最初选择的 PPT 样式
 
 
 class CancelRequest(BaseModel):
     runId: str                           # 要取消的生成任务 id
+
+
+# ── POST /chat/themes：生成或重新生成 PPT 样式模板（普通 JSON，不走 SSE）────
+@router.post("/chat/themes")
+async def chat_themes(payload: ThemeRequest) -> ThemeListResponse:
+    """一次生成 3 个视觉样式；失败时返回内置模板并标记 degraded。"""
+    model_config = await resolve_llm_config(payload.modelId)
+    llm_token = set_llm_config(model_config)
+    try:
+        themes, degraded = await generate_theme_templates(
+            message=payload.message.strip(),
+            feedback=(payload.feedback or "").strip(),
+            current_themes=payload.currentThemes,
+        )
+        return ThemeListResponse(themes=themes, degraded=degraded)
+    finally:
+        reset_llm_config(llm_token)
 
 
 # ── 通用工具 ────────────────────────────────────────────────────────────────
@@ -192,6 +252,9 @@ async def chat(payload: ChatRequest):
             payload.message,
             thread_id=payload.threadId,
             auto_confirm=payload.autoConfirm,
+            outline_only=payload.outlineOnly,
+            topic=payload.topic,
+            outline_hint=payload.outlineHint,
             history=history,
             session_id=session_id,
         )
@@ -232,6 +295,9 @@ async def chat_stream(payload: ChatRequest):
                 payload.message,
                 thread_id=thread_id,
                 auto_confirm=payload.autoConfirm,
+                outline_only=payload.outlineOnly,
+                topic=payload.topic,
+                outline_hint=payload.outlineHint,
                 history=history,
                 session_id=session_id,
             )
@@ -314,6 +380,7 @@ async def chat_confirm(payload: ConfirmRequest):
     answer = {
         "confirmed": bool(payload.confirmed),
         "catalogList": payload.catalogList or [],
+        "theme": payload.theme or None,
     }
 
     async def _runner():
@@ -370,6 +437,82 @@ async def chat_confirm(payload: ConfirmRequest):
     )
 
 
+# ── POST /chat/generate：用确认后的大纲与样式新开线程生成课件 ───────────────
+@router.post("/chat/generate")
+async def chat_generate(payload: GenerateRequest):
+    """SSE：跳过意图/检索/大纲，直接用前端确认的大纲与 PPT 样式生成课件。
+
+    每次调用都新建图线程：停止生成后再次生成时，旧线程的检查点里可能残留
+    上一次的课件产物，恢复旧线程会把旧结果当成新结果返回。
+    """
+    session_id = (payload.sessionId or "").strip()
+    run_id = (payload.runId or "").strip() or uuid4().hex
+    topic = (payload.topic or "").strip()
+    catalog_list = payload.catalogList or []
+    events: asyncio.Queue = asyncio.Queue()
+    model_config = await resolve_llm_config(payload.modelId)
+
+    async def _runner():
+        try:
+            if not topic or not catalog_list:
+                _emit("error", "done", message="缺少主题或大纲，请先完成大纲确认")
+                return
+            state = await start_classroom(
+                topic,
+                catalog_list,
+                payload.theme,
+                session_id=session_id,
+            )
+            result = _terminal_payload(state)
+            _push_terminal(state, session_id, result)
+        except Exception as exc:
+            logger.exception("生成课件失败")
+            _emit("error", "done", message=str(exc))
+        finally:
+            events.put_nowait(None)
+            set_progress_emitter(None)
+
+    async def _event_stream():
+        set_progress_emitter(events.put_nowait)
+        # create_task 会复制当前上下文：后台任务里的 get_llm 能读到本次所选模型
+        llm_token = set_llm_config(model_config)
+        task = asyncio.create_task(_runner())
+        _register_task(run_id, task)
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(events.get(), timeout=300)
+                except asyncio.TimeoutError:
+                    yield _sse({"step": "error", "status": "done", "message": "请求超时"})
+                    break
+                if event is None:
+                    break
+                yield _sse(event)
+        finally:
+            _forget_task(run_id, task)
+            set_progress_emitter(None)
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("生成任务收尾异常")
+            finally:
+                reset_llm_config(llm_token)
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # ── POST /chat/retry：手动重试失败页（图外直调，不受派发上限约束）──────────
 @router.post("/chat/retry")
 async def chat_retry(payload: RetryRequest):
@@ -385,7 +528,7 @@ async def chat_retry(payload: RetryRequest):
 
     async def _runner():
         try:
-            await _retry_failed_pages(session_id, payload.inds)
+            await _retry_failed_pages(session_id, payload.inds, theme=payload.theme)
         except Exception as exc:
             logger.exception("重试失败页失败")
             _emit("error", "done", message=str(exc))
@@ -435,13 +578,18 @@ async def chat_retry(payload: RetryRequest):
     )
 
 
-async def _retry_failed_pages(session_id: str, inds: Optional[list]) -> None:
+async def _retry_failed_pages(
+    session_id: str,
+    inds: Optional[list],
+    theme: Optional[dict] = None,
+) -> None:
     """重试失败页本体：重生成指定页/音频 → 重组装 → 刷新快照与资产库。"""
     snapshot = sessions.get_snapshot(session_id)
     if not snapshot:
         _emit("error", "done", message="没有可重试的课件快照，请先生成课件")
         return
 
+    selected_theme = theme or snapshot.get("selectedTheme") or {}
     catalog = list(snapshot.get("catalogList") or [])
     page_list = list(snapshot.get("pageList") or [])
     audio_list = list(snapshot.get("audioList") or [])
@@ -485,7 +633,7 @@ async def _retry_failed_pages(session_id: str, inds: Optional[list]) -> None:
         def _on_error(exc: Exception) -> None:
             page_errors.append(exc)
 
-        html = await _build_page(topic, module, len(catalog), _on_error)
+        html = await _build_page(topic, module, len(catalog), _on_error, selected_theme)
         pages_by_ind[ind] = {"ind": ind, "context": _module_outline(module), "htmlpage": html}
         if page_errors:
             still_failed.append(
@@ -578,6 +726,7 @@ async def _retry_failed_pages(session_id: str, inds: Optional[list]) -> None:
         audioList=new_audios,
         failedPages=remaining,
         courseHtml=course_html_path,
+        selectedTheme=selected_theme,
     )
     # 保留原记录的创建时间与 id，状态随失败清单变化
     record = await asyncio.to_thread(course_db.get_course, course_id) if course_id else None

@@ -1,152 +1,78 @@
-/* 人工确认大纲视图：与主界面同色系（暖橙 + 浅灰），大卡片承载可编辑大纲 */
-.confirm-root {
-  min-height: 100vh;
-  background: #F7F5F2;
-  padding: 32px 16px 48px;
+.pw-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(91, 69, 224, 0.28) transparent;
 }
 
-.confirm-card {
-  max-width: 760px;
-  margin: 0 auto;
-  background: #FFFFFF;
-  border: 1px solid #ECE8E4;
-  border-radius: 12px;
-  overflow: hidden;
+.pw-scroll::-webkit-scrollbar {
+  width: 6px;
 }
 
-.confirm-header {
-  background: #EC6520;
-  padding: 24px 32px;
-  color: #FFFFFF;
+.pw-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(91, 69, 224, 0.28);
 }
 
-.confirm-header h1 {
-  margin: 0 0 8px;
-  font-size: 22px;
-  font-weight: 700;
+.pw-module {
+  border-color: var(--border);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
 }
 
-.confirm-header p {
-  margin: 0;
-  font-size: 14px;
-  opacity: 0.92;
+.pw-module.is-dragging {
+  opacity: 0.45;
 }
 
-.confirm-body {
-  padding: 24px 32px;
-  max-height: 62vh;
-  overflow-y: auto;
+.pw-module.is-drag-over {
+  border-color: #7259E8;
+  box-shadow: 0 -2px 0 0 #7259E8, 0 12px 26px -20px rgba(91, 69, 224, 0.9);
 }
 
-.confirm-module {
-  border: 1px solid #F0EAE4;
-  border-radius: 8px;
-  background: #FFFBF7;
-  padding: 16px;
-  margin-bottom: 16px;
-}
-
-.confirm-module-head {
-  display: flex;
+.pw-drag-handle {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.confirm-module-ind {
-  color: #EC6520;
-  font-weight: 700;
-  font-size: 15px;
-}
-
-.confirm-point {
-  border-top: 1px dashed #EFE4DA;
-  padding: 12px 0;
-}
-
-.confirm-point:first-of-type {
-  border-top: none;
-}
-
-.confirm-title-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  border: 1px solid #E8DFD6;
+  justify-content: center;
   border-radius: 6px;
-  font-size: 15px;
-  color: #3B3B3B;
+  color: var(--text-faint);
+  cursor: grab;
+  user-select: none;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
-.confirm-context-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  margin-bottom: 8px;
-  border: 1px solid #E8DFD6;
-  border-radius: 6px;
-  font-size: 14px;
-  line-height: 1.7;
-  color: #4A4A4A;
-  resize: vertical;
-  font-family: inherit;
+.pw-drag-handle:hover {
+  background: var(--surface-hover);
+  color: #5B45E0;
 }
 
-.confirm-link {
-  border: none;
-  background: none;
-  color: #EC6520;
-  cursor: pointer;
-  font-size: 13px;
-  padding: 4px 0;
+.pw-drag-handle:active {
+  cursor: grabbing;
 }
 
-.confirm-link.danger {
-  color: #C4553D;
+.pw-drag-handle svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
 }
 
-.confirm-link:disabled {
-  color: #CFC7BF;
-  cursor: default;
+.pw-page-index {
+  border-radius: 999px;
+  background: #F0EDFF;
+  padding: 3px 10px;
+  color: #5B45E0;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 20px 32px;
-  border-top: 1px solid #F0EAE4;
-  background: #FFFBF7;
+.pw-input {
+  border-color: var(--border);
 }
 
-.ghost-btn {
-  padding: 12px 28px;
-  border: 1px solid #E8DFD6;
-  background: #FFFFFF;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 15px;
-  color: #8A7F76;
-}
-
-.primary-btn {
-  padding: 12px 32px;
-  border: none;
-  background: #EC6520;
-  color: #FFFFFF;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.primary-btn:hover {
-  background: #F2732E;
-}
-
-.primary-btn:disabled,
-.ghost-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
+.pw-input:focus {
+  border-color: #7259E8;
+  box-shadow: 0 0 0 3px rgba(114, 89, 232, 0.14);
 }

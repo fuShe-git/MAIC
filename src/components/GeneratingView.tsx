@@ -20,6 +20,10 @@ interface GeneratingViewProps {
   message: string
   /** 讲解主题 */
   topic: string
+  /** 首页原始输入，展示在生成页顶部摘要 */
+  courseTitle?: string
+  /** 用户所选 PPT 样式名称 */
+  themeName?: string
   /** 课件就绪后的产物（ready 态展示与降级提示用） */
   lecture: ChatResponse | null
   onBack: () => void
@@ -31,12 +35,8 @@ interface GeneratingViewProps {
   onRetryFailed?: () => void
 }
 
-/** 步骤清单（v4 新增 safety / quiz；confirm / retry 按需出现） */
+/** 步骤清单（confirm / retry 按需出现；前置阶段不在清单中展示） */
 const STEP_DEFS: Array<{ key: ProgressStep; label: string }> = [
-  { key: 'check', label: '检查与理解' },
-  { key: 'safety', label: '内容安全审核' },
-  { key: 'topic', label: '确认主题' },
-  { key: 'outline', label: '生成大纲' },
   { key: 'pages', label: '生成页面' },
   { key: 'audio', label: '合成音频' },
   { key: 'quiz', label: '课后练习' },
@@ -86,6 +86,8 @@ export default function GeneratingView({
   audioTotal,
   message,
   topic,
+  courseTitle,
+  themeName,
   lecture,
   onBack,
   onInterrupt,
@@ -141,7 +143,7 @@ export default function GeneratingView({
   const subtitle = ready
     ? partial
       ? '讲解已就绪，但有部分内容降级交付'
-      : '讲解已就绪，可以开始学习了'
+      : '课件已就绪，可以进入课堂了'
     : failed
       ? '很抱歉，生成过程中出了点问题'
       : interrupted
@@ -164,6 +166,20 @@ export default function GeneratingView({
         </svg>
         返回
       </button>
+
+      <div className="gv-stage-head">
+        <div className="gv-stage-steps" aria-label="生成流程步骤">
+          <span className="gv-stage-step is-done">大纲确认</span>
+          <span className="gv-stage-line" />
+          <span className="gv-stage-step is-done">主题选择</span>
+          <span className="gv-stage-line" />
+          <span className="gv-stage-step is-current">课件生成</span>
+        </div>
+        <div className="gv-stage-summary">
+          <span title={courseTitle || topic}>{courseTitle || topic || '新的课程'}</span>
+          {themeName ? <span className="gv-stage-theme">样式 · {themeName}</span> : null}
+        </div>
+      </div>
 
       <div className="gv-orb gv-orb-blue" />
       <div className="gv-orb gv-orb-purple" />
@@ -190,7 +206,6 @@ export default function GeneratingView({
               let count = ''
               if (def.key === 'pages' && pagesTotal > 0) count = `${pagesCurrent} / ${pagesTotal}`
               else if (def.key === 'audio' && audioTotal > 0) count = `${audioCurrent} / ${audioTotal}`
-              else if (def.key === 'topic' && topic) count = topic
               return (
                 <li key={def.key} className={`gv-step ${done ? 'is-done' : ''} ${active ? 'is-active' : ''}`}>
                   <span className="gv-step-mark">{done ? <CheckIcon /> : <i />}</span>
@@ -233,14 +248,14 @@ export default function GeneratingView({
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <rect x="6" y="6" width="12" height="12" rx="2" />
             </svg>
-            中断生成
+            停止生成
           </button>
         ) : null}
 
         {ready ? (
           <>
             <button className="gv-btn is-primary" type="button" onClick={onStart}>
-              开始学习
+              进入课堂
             </button>
             {partial && onRetryFailed ? (
               <button className="gv-btn is-ghost" type="button" onClick={onRetryFailed}>
