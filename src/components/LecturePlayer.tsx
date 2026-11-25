@@ -39,8 +39,8 @@ export interface LecturePlayerProps {
 const LOAD_TIMEOUT_MS = 15_000
 /** 轮询课件内部页码 / 播放态的间隔 */
 const POLL_MS = 400
-/** 讲解词面板默认高度 */
-const LOWER_DEFAULT_HEIGHT = 240
+/** 讲解词面板默认高度：够放下控制条与两行讲稿，同时给课件留出更多空间 */
+const LOWER_DEFAULT_HEIGHT = 168
 /**
  * 课件画布基准尺寸（16:9）。课件舞台为 min(94vw, 1100px)，
  * 用 1170×658 作 iframe 视口时舞台刚好取到 1100 的原始版式。
