@@ -519,3 +519,98 @@
     animation: none;
   }
 }
+
+/* ---------- 浅色主题适配：讨论侧栏跟随全局主题变量 ---------- */
+
+html[data-theme='light'] .dp-panel {
+  border-left-color: var(--border);
+  background: #fff;
+  box-shadow: -24px 0 60px -40px rgba(40, 32, 90, 0.4);
+}
+
+html[data-theme='light'] .dp-tabbar {
+  border-bottom-color: var(--border);
+  background: var(--surface-2);
+}
+
+html[data-theme='light'] .dp-tab {
+  color: var(--text-dim);
+}
+
+html[data-theme='light'] .dp-tab.is-active {
+  color: var(--text);
+}
+
+html[data-theme='light'] .dp-tab-action {
+  color: var(--text-dim);
+}
+
+html[data-theme='light'] .dp-tab-action:hover {
+  background: var(--chrome-hover);
+  color: var(--text);
+}
+
+html[data-theme='light'] .dp-mode-bar {
+  border-bottom-color: var(--border);
+  background: var(--surface-2);
+}
+
+html[data-theme='light'] .dp-mode-title {
+  color: var(--text);
+}
+
+html[data-theme='light'] .dp-mode-count,
+html[data-theme='light'] .dp-status {
+  color: var(--text-dim);
+}
+
+html[data-theme='light'] .dp-status {
+  border-bottom-color: var(--border);
+}
+
+html[data-theme='light'] .dp-bubble {
+  border-color: var(--border);
+  background: rgba(28, 26, 58, 0.04);
+}
+
+html[data-theme='light'] .dp-source-tag {
+  border-color: var(--border);
+  background: var(--chrome-hover);
+}
+
+html[data-theme='light'] .dp-source-tag.is-courseware {
+  border-color: rgba(91, 69, 224, 0.35);
+  color: #5b45e0;
+}
+
+html[data-theme='light'] .dp-source-tag.is-web,
+html[data-theme='light'] .dp-source-tag.is-mixed {
+  border-color: rgba(26, 143, 132, 0.35);
+  color: #12796f;
+}
+
+html[data-theme='light'] .dp-section-title,
+html[data-theme='light'] .dp-thread-name {
+  color: var(--text);
+}
+
+html[data-theme='light'] .dp-thread-desc,
+html[data-theme='light'] .dp-empty-hint,
+html[data-theme='light'] .dp-tip,
+html[data-theme='light'] .dp-input::placeholder {
+  color: var(--text-faint);
+}
+
+html[data-theme='light'] .dp-compose {
+  border-top-color: var(--border);
+  background: var(--surface-2);
+}
+
+html[data-theme='light'] .dp-input {
+  border-color: var(--border-strong);
+  background: #fff;
+}
+
+html[data-theme='light'] .dp-input:focus {
+  border-color: rgba(91, 69, 224, 0.6);
+}

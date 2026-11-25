@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { I18nContext } from './context'
 import { MESSAGES } from './messages'
 import type { Lang, MessageKey } from './messages'
 
 const STORAGE_KEY = 'maic.lang'
+/** 语言切换节流间隔：3 秒内只允许切换一次 */
+const TOGGLE_INTERVAL_MS = 3000
 
 /** 读取本地保存的语种，非法值回落到中文 */
 function readStoredLang(): Lang {
@@ -27,6 +29,8 @@ function interpolate(template: string, vars?: Record<string, string | number>): 
 
 export default function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(readStoredLang)
+  // 节流时间戳：只拦 toggleLang，setLang 的显式指定不受影响
+  const lastToggleRef = useRef(0)
 
   // 同步 <html lang>，方便字体回退与无障碍朗读
   useEffect(() => {
@@ -43,6 +47,10 @@ export default function I18nProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const toggleLang = useCallback(() => {
+    // 3 秒内重复点击直接忽略；首次点击 lastToggleRef 为 0，立即可用
+    const now = Date.now()
+    if (now - lastToggleRef.current < TOGGLE_INTERVAL_MS) return false
+    lastToggleRef.current = now
     setLangState((prev) => {
       const next: Lang = prev === 'zh' ? 'en' : 'zh'
       try {
@@ -52,6 +60,7 @@ export default function I18nProvider({ children }: { children: ReactNode }) {
       }
       return next
     })
+    return true
   }, [])
 
   const t = useCallback(

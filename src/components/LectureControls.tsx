@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../i18n/context'
 import type { CourseSourceKind } from '../utils/courseSource'
 import {
   IconAutoPlay,
@@ -101,6 +102,7 @@ export default function LectureControls({
   onSeek,
   variant = 'bar',
 }: LectureControlsProps) {
+  const { t } = useI18n()
   const [rateOpen, setRateOpen] = useState(false)
   const rateRef = useRef<HTMLDivElement>(null)
 
@@ -130,19 +132,33 @@ export default function LectureControls({
   } else if (kind === 'html') {
     center = (
       <>
-        <button className="lp-ctrl" type="button" disabled={atFirst} onClick={onPrev} aria-label="上一页" title="上一页">
+        <button
+          className="lp-ctrl"
+          type="button"
+          disabled={atFirst}
+          onClick={onPrev}
+          aria-label={t('controls.prev')}
+          title={t('controls.prev')}
+        >
           <IconPrev />
         </button>
         <button
           className="lp-ctrl"
           type="button"
           onClick={onToggle}
-          aria-label={playing ? '暂停' : '开始'}
-          title={playing ? '暂停' : '开始'}
+          aria-label={playing ? t('controls.pause') : t('controls.start')}
+          title={playing ? t('controls.pause') : t('controls.start')}
         >
           {playing ? <IconPause /> : <IconPlay />}
         </button>
-        <button className="lp-ctrl" type="button" disabled={atLast} onClick={onNext} aria-label="下一页" title="下一页">
+        <button
+          className="lp-ctrl"
+          type="button"
+          disabled={atLast}
+          onClick={onNext}
+          aria-label={t('controls.next')}
+          title={t('controls.next')}
+        >
           <IconNext />
         </button>
       </>
@@ -154,8 +170,8 @@ export default function LectureControls({
           className="lp-ctrl"
           type="button"
           onClick={onToggle}
-          aria-label={videoPlaying ? '暂停' : '播放'}
-          title={videoPlaying ? '暂停' : '播放'}
+          aria-label={videoPlaying ? t('controls.pause') : t('controls.play')}
+          title={videoPlaying ? t('controls.pause') : t('controls.play')}
         >
           {videoPlaying ? <IconPause /> : <IconPlay />}
         </button>
@@ -167,7 +183,7 @@ export default function LectureControls({
           step={0.1}
           value={videoTime}
           onChange={(event) => onSeek(Number(event.target.value))}
-          aria-label="播放进度"
+          aria-label={t('controls.progress')}
         />
         <span className="lp-page">{formatTime(videoTime)} / {formatTime(videoDuration)}</span>
       </>
@@ -175,11 +191,25 @@ export default function LectureControls({
   } else if (kind === 'pages' && pageTotal > 0) {
     center = (
       <>
-        <button className="lp-ctrl" type="button" disabled={pageIndex === 0} onClick={() => onPageIndexChange(Math.max(0, pageIndex - 1))} aria-label="上一页" title="上一页">
+        <button
+          className="lp-ctrl"
+          type="button"
+          disabled={pageIndex === 0}
+          onClick={() => onPageIndexChange(Math.max(0, pageIndex - 1))}
+          aria-label={t('controls.prev')}
+          title={t('controls.prev')}
+        >
           <IconPrev />
         </button>
         <span className="lp-page">{pageIndex + 1} / {pageTotal}</span>
-        <button className="lp-ctrl" type="button" disabled={pageIndex >= pageTotal - 1} onClick={() => onPageIndexChange(Math.min(pageTotal - 1, pageIndex + 1))} aria-label="下一页" title="下一页">
+        <button
+          className="lp-ctrl"
+          type="button"
+          disabled={pageIndex >= pageTotal - 1}
+          onClick={() => onPageIndexChange(Math.min(pageTotal - 1, pageIndex + 1))}
+          aria-label={t('controls.next')}
+          title={t('controls.next')}
+        >
           <IconNext />
         </button>
       </>
@@ -194,15 +224,15 @@ export default function LectureControls({
           type="button"
           onClick={() => setRateOpen((value) => !value)}
           disabled={!audioEnabled}
-          aria-label="播放倍速"
+          aria-label={t('controls.rate')}
           aria-haspopup="listbox"
           aria-expanded={rateOpen}
-          title="播放倍速"
+          title={t('controls.rate')}
         >
           {rate}x
         </button>
         {rateOpen && (
-          <div className="lp-rate-menu" role="listbox" aria-label="播放倍速">
+          <div className="lp-rate-menu" role="listbox" aria-label={t('controls.rate')}>
             {RATES.map((value) => (
               <button
                 key={value}
@@ -228,8 +258,8 @@ export default function LectureControls({
           type="button"
           onClick={() => onVolumeChange(volume > 0 ? 0 : 1)}
           disabled={!audioEnabled}
-          aria-label={volume === 0 ? '取消静音' : '静音'}
-          title={volume === 0 ? '取消静音' : '静音'}
+          aria-label={volume === 0 ? t('controls.unmute') : t('controls.mute')}
+          title={volume === 0 ? t('controls.unmute') : t('controls.mute')}
         >
           {volume === 0 ? <IconMute /> : <IconVolume />}
         </button>
@@ -244,7 +274,7 @@ export default function LectureControls({
             value={volume}
             onChange={(event) => onVolumeChange(Number(event.target.value))}
             disabled={!audioEnabled}
-            aria-label="音量"
+            aria-label={t('controls.volume')}
           />
         </div>
       </div>
@@ -269,9 +299,9 @@ export default function LectureControls({
             className={`lp-ctrl is-icon is-outline${outlineOpen ? ' is-active' : ''}`}
             type="button"
             onClick={onToggleOutline}
-            aria-label={outlineOpen ? '收起课件大纲' : '展开课件大纲'}
+            aria-label={outlineOpen ? t('controls.collapseCourseOutline') : t('controls.expandCourseOutline')}
             aria-expanded={outlineOpen}
-            title={outlineOpen ? '收起大纲' : '展开大纲'}
+            title={outlineOpen ? t('controls.collapseOutline') : t('controls.expandOutline')}
           >
             <IconOutline />
           </button>
@@ -290,9 +320,9 @@ export default function LectureControls({
           type="button"
           onClick={onToggleAutoPlay}
           disabled={!audioEnabled}
-          aria-label={autoPlay ? '关闭自动播放' : '开启自动播放'}
+          aria-label={autoPlay ? t('controls.autoplayOff') : t('controls.autoplayOn')}
           aria-pressed={autoPlay}
-          title={autoPlay ? '关闭自动播放' : '开启自动播放'}
+          title={autoPlay ? t('controls.autoplayOff') : t('controls.autoplayOn')}
         >
           <IconAutoPlay />
         </button>
@@ -302,8 +332,8 @@ export default function LectureControls({
           type="button"
           onClick={onToggleFullscreen}
           disabled={kind === 'none'}
-          aria-label={isFullscreen ? '退出全屏' : '课件全屏'}
-          title={isFullscreen ? '退出全屏' : '课件全屏'}
+          aria-label={isFullscreen ? t('controls.exitFullscreen') : t('controls.fullscreen')}
+          title={isFullscreen ? t('controls.exitFullscreen') : t('controls.fullscreen')}
         >
           <IconFullscreen />
         </button>
@@ -312,9 +342,9 @@ export default function LectureControls({
           className="lp-ctrl is-icon"
           type="button"
           onClick={onToggleLower}
-          aria-label={lowerCollapsed ? '展开讲解词' : '收起讲解词'}
+          aria-label={lowerCollapsed ? t('controls.expandTranscript') : t('controls.collapseTranscript')}
           aria-expanded={!lowerCollapsed}
-          title={lowerCollapsed ? '展开讲解词' : '收起讲解词'}
+          title={lowerCollapsed ? t('controls.expandTranscript') : t('controls.collapseTranscript')}
         >
           {lowerCollapsed ? <IconExpandMore /> : <IconExpandLess />}
         </button>
@@ -323,8 +353,8 @@ export default function LectureControls({
           className={`lp-ctrl is-icon${discussionOpen ? ' is-active' : ''}`}
           type="button"
           onClick={onToggleDiscussion}
-          aria-label={discussionOpen ? '收起对话' : '展开对话'}
-          title={discussionOpen ? '收起对话' : '展开对话'}
+          aria-label={discussionOpen ? t('controls.collapseDiscussion') : t('controls.expandDiscussion')}
+          title={discussionOpen ? t('controls.collapseDiscussion') : t('controls.expandDiscussion')}
         >
           <IconDiscussion />
         </button>

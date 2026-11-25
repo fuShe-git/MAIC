@@ -18,7 +18,10 @@ import {
   renameFolder,
 } from '../api/folders'
 import type { CourseFolder } from '../api/folders'
+import { downloadBlob, withMinDuration } from '../utils/download'
 import ConfirmDialog from './ConfirmDialog'
+import DownloadIcon from './DownloadIcon'
+import SpinnerIcon from './SpinnerIcon'
 import NewFolderModal from './NewFolderModal'
 import './HistorySection.css'
 
@@ -127,31 +130,6 @@ function PencilIcon() {
         strokeLinejoin="round"
       />
       <path d="m14.8 6 3.2 3.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-/** 导出 PPT：幻灯片 + 向下箭头 */
-function PptIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect
-        x="3.6"
-        y="4.6"
-        width="16.8"
-        height="11.4"
-        rx="1.6"
-        stroke="currentColor"
-        strokeWidth="1.6"
-      />
-      <path
-        d="M12 7.8v4.6m0 0-1.8-1.8m1.8 1.8 1.8-1.8"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M8 19.4h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   )
 }
@@ -376,22 +354,15 @@ export default function HistorySection({
     exportingRef.current = true
     setExportingId(course.id)
     try {
-      const blob = await exportGeneratedPptx(course.fileName)
+      // 缓存命中时请求瞬间返回，包一层最小时长保证加载图标可见
+      const blob = await withMinDuration(exportGeneratedPptx(course.fileName), 600)
       // 文件名用展示名并去掉文件系统非法字符，空名时回退课程 id
       const baseName =
         displayName(course)
           .replace(/[\\/:*?"<>|]/g, ' ')
           .replace(/\s+/g, ' ')
           .trim() || course.id
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `${baseName}.pptx`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      // 立即 revoke 可能打断部分浏览器的下载，延迟释放
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+      downloadBlob(blob, `${baseName}.pptx`)
     } catch {
       setToast(t('history.exportPptFailed'))
     } finally {
@@ -736,7 +707,7 @@ export default function HistorySection({
               disabled={Boolean(exportingId)}
               onClick={() => handleExportPpt(course)}
             >
-              <PptIcon />
+              {exporting ? <SpinnerIcon /> : <DownloadIcon />}
             </button>
             <button
               className="history-act-btn is-danger"

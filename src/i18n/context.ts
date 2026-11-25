@@ -6,8 +6,8 @@ export interface I18nContextValue {
   lang: Lang
   /** 切换语种（会持久化到 localStorage） */
   setLang: (lang: Lang) => void
-  /** 在中/英之间来回切换 */
-  toggleLang: () => void
+  /** 在中/英之间来回切换；返回 false 表示被 3 秒节流拦截 */
+  toggleLang: () => boolean
   /** 取词条，支持 {name} 占位符插值 */
   t: (key: MessageKey, vars?: Record<string, string | number>) => string
 }

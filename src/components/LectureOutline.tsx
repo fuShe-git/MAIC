@@ -4,6 +4,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from 'react'
+import { useI18n } from '../i18n/context'
 import type { OutlineItem } from '../utils/courseContext'
 import './LectureOutline.css'
 
@@ -66,6 +67,7 @@ export default function LectureOutline({
   onSelect,
   onCollapse,
 }: LectureOutlineProps) {
+  const { t } = useI18n()
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
   const listRef = useRef<HTMLOListElement>(null)
   const widthDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
@@ -137,8 +139,7 @@ export default function LectureOutline({
       <aside className="lp-outline" aria-label="课件大纲">
         <div className="lp-outline-head">
           <div className="lp-outline-head-text">
-            <p className="lp-outline-kicker">CONTENTS</p>
-            <h2 className="lp-outline-heading">课程大纲</h2>
+            <h2 className="lp-outline-heading">{t('outline.title')}</h2>
           </div>
           <span className="lp-outline-count">
             {currentPage ?? 1}
@@ -194,8 +195,6 @@ export default function LectureOutline({
             )
           })}
         </ol>
-
-        <p className="lp-outline-hint">点击任意页可直接跳转</p>
 
         <div
           className="lp-outline-resize"

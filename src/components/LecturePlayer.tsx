@@ -7,11 +7,13 @@ import { pickCourseSource } from '../utils/courseSource'
 import type { CourseSourceKind } from '../utils/courseSource'
 import { useAutoHideControls } from '../hooks/useAutoHideControls'
 import { useFullscreen, usePlaybackSettings } from '../hooks/usePlaybackSettings'
+import { useTheme } from '../theme/context'
 import DiscussionPanel from './DiscussionPanel'
 import LectureControls from './LectureControls'
 import type { LectureControlsProps } from './LectureControls'
 import LectureOutline from './LectureOutline'
 import LectureTranscript from './LectureTranscript'
+import PlayerTopActions from './PlayerTopActions'
 import './LecturePlayer.css'
 
 export interface LecturePlayerProps {
@@ -150,6 +152,7 @@ export default function LecturePlayer({
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(frameWrapRef)
   // 全屏浮层控制条：静止一段时间自动隐藏，鼠标移动/按键/触摸重新出现
   const fsControls = useAutoHideControls(isFullscreen)
+  const { resolved: theme } = useTheme()
 
   // 课件 body 是从顶部起排的，全屏放大后舞台会贴顶偏上；这里让它垂直居中
   useEffect(() => {
@@ -157,6 +160,26 @@ export default function LecturePlayer({
     if (!body) return
     body.style.justifyContent = isFullscreen ? 'center' : ''
   }, [isFullscreen, frameReady])
+
+  /**
+   * 课件是独立 HTML 文档，父页面的 CSS 变量进不去 iframe。
+   * 同源课件里注入一段轻量主题样式，让浅色主题下课件外围不再是深色底。
+   */
+  useEffect(() => {
+    if (source.kind !== 'html') return
+    const doc = frameRef.current?.contentDocument
+    if (!doc?.head) return
+    let style = doc.getElementById('lp-course-theme') as HTMLStyleElement | null
+    if (!style) {
+      style = doc.createElement('style')
+      style.id = 'lp-course-theme'
+      doc.head.appendChild(style)
+    }
+    style.textContent =
+      theme === 'light'
+        ? 'html,body{background:#f5f4f9!important;color:#1e1f29}.stage{background:transparent!important;box-shadow:0 24px 70px -40px rgba(40,32,90,.35)!important}.controls{color:#1e1f29}'
+        : ''
+  }, [theme, source.kind, source.src, frameReady])
 
   /**
    * 课件（及逐页兜底）都装在 iframe 里，指针进入 iframe 后 mousemove 只在子文档触发、
@@ -476,9 +499,9 @@ export default function LecturePlayer({
           </svg>
         </button>
         <div className="lp-heading">
-          <span className="lp-kicker">课件播放</span>
           <h1 className="lp-title">{topic || '课堂讲解'}</h1>
         </div>
+        <PlayerTopActions courseId={courseId} topic={topic} />
       </header>
 
       {outlineVisible && (

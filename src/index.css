@@ -109,3 +109,15 @@ button {
 img {
   display: block;
 }
+
+/* ---------- 通用加载图标 ---------- */
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin-icon {
+  animation: icon-spin 0.8s linear infinite;
+}

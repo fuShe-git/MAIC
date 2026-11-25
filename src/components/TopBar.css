@@ -138,6 +138,25 @@
   height: 14px;
 }
 
+/* 轻提示：语言切换被节流拦截等场景 */
+.topbar-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  z-index: 90;
+  max-width: min(360px, calc(100% - 32px));
+  padding: 9px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--popover-bg);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  box-shadow: var(--shadow-pop);
+  transform: translateX(-50%);
+}
+
 @media (max-width: 640px) {
   .topbar {
     top: 14px;

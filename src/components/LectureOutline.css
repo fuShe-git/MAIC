@@ -31,14 +31,6 @@
   flex: 1;
 }
 
-.lp-outline-kicker {
-  margin: 0 0 2px;
-  font-size: 9px;
-  font-weight: 500;
-  letter-spacing: 0.16em;
-  color: rgba(160, 157, 184, 0.66);
-}
-
 .lp-outline-heading {
   margin: 0;
   font-size: 14px;
@@ -264,14 +256,6 @@
   border-color: rgba(139, 123, 255, 0.4);
 }
 
-.lp-outline-hint {
-  flex: none;
-  margin: 10px 2px 0;
-  color: rgba(108, 108, 128, 0.8);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
 /* 右边缘拖动条：覆盖在分隔线上，拖动时由播放器保存宽度并重算缩略图 */
 .lp-outline-resize {
   position: absolute;
@@ -376,9 +360,6 @@
     padding: 62px 14px 14px 14px;
   }
 
-  .lp-outline-hint {
-    display: none;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -391,4 +372,88 @@
   .lp-outline-item {
     transition: none;
   }
+}
+
+/* ---------- 浅色主题适配：大纲外壳与文字统一走主题变量 ---------- */
+
+html[data-theme='light'] .lp-outline {
+  border-right-color: var(--border);
+  background:
+    radial-gradient(120% 40% at 0% 0%, rgba(120, 96, 255, 0.08), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 247, 253, 0.94));
+}
+
+html[data-theme='light'] .lp-outline-count {
+  color: var(--text-dim);
+}
+
+html[data-theme='light'] .lp-outline-count i {
+  color: var(--text-faint);
+}
+
+html[data-theme='light'] .lp-outline-collapse {
+  border-color: var(--border);
+  background: var(--chrome-hover);
+  color: var(--text-dim);
+}
+
+html[data-theme='light'] .lp-outline-collapse:hover {
+  background: rgba(139, 123, 255, 0.14);
+  color: var(--text);
+}
+
+html[data-theme='light'] .lp-outline-item {
+  background: var(--chrome-hover);
+}
+
+html[data-theme='light'] .lp-outline-item:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: rgba(28, 26, 58, 0.07);
+}
+
+html[data-theme='light'] .lp-outline-item.is-active {
+  border-color: rgba(91, 69, 224, 0.42);
+  background:
+    linear-gradient(120deg, rgba(139, 123, 255, 0.14), rgba(53, 214, 198, 0.06)),
+    #fff;
+  box-shadow:
+    0 10px 26px -20px rgba(91, 69, 224, 0.55),
+    inset 0 0 0 1px rgba(91, 69, 224, 0.08);
+}
+
+html[data-theme='light'] .lp-outline-num {
+  background: rgba(28, 26, 58, 0.07);
+  color: var(--text-dim);
+}
+
+html[data-theme='light'] .lp-outline-item.is-active .lp-outline-num {
+  background: rgba(91, 69, 224, 0.14);
+  color: #5b45e0;
+}
+
+html[data-theme='light'] .lp-outline-label {
+  color: var(--text-dim);
+}
+
+html[data-theme='light'] .lp-outline-item.is-active .lp-outline-label {
+  color: var(--text);
+}
+
+html[data-theme='light'] .lp-outline-thumb,
+html[data-theme='light'] .lp-outline-thumb iframe {
+  border-color: var(--border-strong);
+  background: #fff;
+}
+
+html[data-theme='light'] .lp-outline-thumb.is-empty {
+  background:
+    linear-gradient(135deg, rgba(139, 123, 255, 0.1), transparent 60%),
+    #fff;
+  color: var(--text-faint);
+}
+
+html[data-theme='light'] .lp-outline-resize:hover::after,
+html[data-theme='light'] .lp-outline-resize:focus-visible::after {
+  background: rgba(91, 69, 224, 0.8);
+  box-shadow: 0 0 10px rgba(91, 69, 224, 0.45);
 }

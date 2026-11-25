@@ -69,7 +69,20 @@ export default function TopBar({ onOpenSettings }: TopBarProps) {
   const { lang, toggleLang, t } = useI18n()
   const { mode, resolved, setMode } = useTheme()
   const [menuOpen, setMenuOpen] = useState(false)
+  // 节流拦截等轻提示（自动消失）
+  const [toast, setToast] = useState('')
   const rootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(''), 3200)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  /** 切换语言：被 3 秒节流拦截时给出提示 */
+  function handleToggleLang() {
+    if (!toggleLang()) setToast(t('topbar.langThrottled'))
+  }
 
   // 点击外部或按 Esc 收起主题下拉
   useEffect(() => {
@@ -100,7 +113,7 @@ export default function TopBar({ onOpenSettings }: TopBarProps) {
         <button
           className="topbar-btn topbar-lang"
           type="button"
-          onClick={toggleLang}
+          onClick={handleToggleLang}
           title={t('topbar.lang')}
           aria-label={t('topbar.lang')}
         >
@@ -148,6 +161,12 @@ export default function TopBar({ onOpenSettings }: TopBarProps) {
               <span>{option.label}</span>
             </button>
           ))}
+        </div>
+      ) : null}
+
+      {toast ? (
+        <div className="topbar-toast" role="status">
+          {toast}
         </div>
       ) : null}
     </div>

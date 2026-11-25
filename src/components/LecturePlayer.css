@@ -24,7 +24,7 @@
     var(--bg);
 }
 
-/* ---------- 顶栏：返回 + 标题（右上角按需求留空） ---------- */
+/* ---------- 顶栏：返回 + 标题 + 右侧操作区 ---------- */
 
 .lp-top {
   position: relative;
@@ -76,15 +76,7 @@
 .lp-heading {
   min-width: 0;
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.lp-kicker {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
+  text-align: left;
 }
 
 .lp-title {
@@ -96,6 +88,33 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 顶栏右侧操作区：中英切换 / 主题切换 / 导出 PPT */
+.lp-top-actions {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 导出失败的轻提示：播放页没有全局 toast，这里自带一个 */
+.lp-action-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  z-index: 90;
+  max-width: min(360px, calc(100% - 32px));
+  padding: 9px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--popover-bg);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.8);
+  transform: translateX(-50%);
 }
 
 .lp.has-discussion .lp-top {
@@ -795,11 +814,29 @@
   .lp-bottom {
     grid-column: 1;
   }
+
+  /* 窄屏讨论区是覆盖抽屉，顶栏不再为它让位，否则右侧按钮会被挤出屏幕 */
+  .lp.has-discussion .lp-top {
+    padding-right: 22px;
+  }
 }
 
 @media (max-width: 640px) {
   .lp-top {
     padding: 12px 14px;
+  }
+
+  .lp.has-discussion .lp-top {
+    padding-right: 14px;
+  }
+
+  .lp-top-actions .topbar-group {
+    height: 30px;
+  }
+
+  .lp-top-actions .topbar-btn {
+    width: 24px;
+    height: 24px;
   }
 
   .lp-title {
@@ -835,4 +872,149 @@
   .lp-transcript-bubble {
     font-size: 13px;
   }
+}
+
+/* ---------- 浅色主题适配：覆盖深色写死的背景与描边 ---------- */
+
+html[data-theme='light'] .lp {
+  background:
+    radial-gradient(120% 60% at 50% -14%, rgba(120, 96, 255, 0.12), transparent 62%),
+    radial-gradient(70% 35% at 50% -6%, rgba(53, 214, 198, 0.08), transparent 70%),
+    var(--bg);
+}
+
+html[data-theme='light'] .lp-top {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.97),
+    rgba(255, 255, 255, 0.78) 70%,
+    transparent
+  );
+}
+
+html[data-theme='light'] .lp-back {
+  border-color: var(--border-strong);
+  background: var(--chrome-hover);
+}
+
+html[data-theme='light'] .lp-back:hover {
+  border-color: rgba(28, 26, 58, 0.24);
+  background: rgba(28, 26, 58, 0.1);
+}
+
+html[data-theme='light'] .lp-frame {
+  border-color: var(--border-strong);
+  background: #fff;
+  box-shadow:
+    0 30px 70px -40px rgba(40, 32, 90, 0.45),
+    inset 0 1px 0 #fff;
+}
+
+html[data-theme='light'] .lp-iframe,
+html[data-theme='light'] .lp-video {
+  background: #fff;
+}
+
+html[data-theme='light'] .lp-frame:fullscreen .lp-iframe {
+  background: transparent;
+}
+
+html[data-theme='light'] .lp-fs-overlay {
+  border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow:
+    0 18px 44px -26px rgba(40, 32, 90, 0.45),
+    inset 0 1px 0 #fff;
+}
+
+html[data-theme='light'] .lp-fs-overlay .lp-ctrl {
+  background: var(--chrome-hover);
+}
+
+html[data-theme='light'] .lp-loading {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+html[data-theme='light'] .lp-empty {
+  background: #fff;
+}
+
+html[data-theme='light'] .lp-statusbar {
+  border-color: var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 249, 255, 0.94));
+  box-shadow:
+    0 18px 40px -32px rgba(40, 32, 90, 0.4),
+    inset 0 1px 0 #fff;
+}
+
+html[data-theme='light'] .lp-ctrl {
+  border-color: var(--border);
+  background: var(--chrome-hover);
+}
+
+html[data-theme='light'] .lp-ctrl:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: rgba(28, 26, 58, 0.1);
+}
+
+html[data-theme='light'] .lp-ctrl.is-active {
+  border-color: rgba(26, 143, 132, 0.45);
+  background: rgba(53, 214, 198, 0.14);
+  color: #12796f;
+}
+
+html[data-theme='light'] .lp-ctrl.is-outline.is-active {
+  border-color: rgba(91, 69, 224, 0.45);
+  background: rgba(139, 123, 255, 0.14);
+  color: #5b45e0;
+}
+
+html[data-theme='light'] .lp-rate-menu {
+  border-color: var(--border-strong);
+  background: #fff;
+  box-shadow: var(--shadow-pop);
+}
+
+html[data-theme='light'] .lp-rate-option:hover,
+html[data-theme='light'] .lp-rate-option.is-active {
+  background: rgba(139, 123, 255, 0.14);
+  color: var(--text);
+}
+
+html[data-theme='light'] .lp-volume-panel {
+  border-color: var(--border-strong);
+  background: #fff;
+  box-shadow: var(--shadow-pop);
+}
+
+html[data-theme='light'] .lp-volume-range,
+html[data-theme='light'] .lp-seek {
+  background: rgba(28, 26, 58, 0.18);
+}
+
+html[data-theme='light'] .lp-volume-range::-webkit-slider-thumb,
+html[data-theme='light'] .lp-volume-range::-moz-range-thumb,
+html[data-theme='light'] .lp-seek::-webkit-slider-thumb,
+html[data-theme='light'] .lp-seek::-moz-range-thumb {
+  border-color: #fff;
+}
+
+html[data-theme='light'] .lp-lower {
+  border-color: var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(250, 249, 255, 0.97));
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 24px 50px -40px rgba(40, 32, 90, 0.4);
+}
+
+html[data-theme='light'] .lp-lower .lp-statusbar {
+  border-color: var(--border);
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-theme='light'] .lp-transcript-bubble {
+  border-color: var(--border);
+  background: rgba(28, 26, 58, 0.04);
+  color: var(--text);
 }
