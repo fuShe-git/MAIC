@@ -48,6 +48,59 @@ export function parsePageNumber(pageLabel: string): number | null {
   return Number.isFinite(value) ? value : null
 }
 
+/** 从「3 / 8」里解析总页数；格式不合法时返回 null */
+export function parsePageTotal(pageLabel: string): number | null {
+  const match = /\/(\d+)\s*$/.exec(pageLabel ?? '')
+  if (!match) return null
+  const value = Number(match[1])
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+
+/** 播放器左侧大纲的一页 */
+export interface OutlineItem {
+  /** 后端页面编号，用于对齐 pageList */
+  ind: number
+  /** 从 1 开始的展示页序，与课件内部页码一致 */
+  page: number
+  /** 从 context 首行提取的短标题 */
+  title: string
+  /** 该页 HTML 去掉脚本后的静态快照，用作缩略预览 */
+  htmlpage: string
+}
+
+/**
+ * 缩略图只需要静态画面：去掉 <script>，避免 sandbox 拦截脚本后在控制台刷错误，
+ * 顺带减少每页重复解析脚本的开销。
+ */
+function toThumbHtml(html: string): string {
+  return html.replace(/<script\b[\s\S]*?<\/script>/gi, '')
+}
+
+/**
+ * 把 pageList 转成左侧大纲数据。
+ * 后端把每个模块写成「标题：讲稿」的多行 context，首行冒号前即页面标题；
+ * 取不到标题时退回「第 N 页」，不额外依赖大纲接口。
+ */
+export function buildOutlineItems(pageList: PageItem[]): OutlineItem[] {
+  return pageList.map((page, index) => {
+    const pageNo = index + 1
+    const firstLine = (page.context ?? '').trim().split(/\r?\n/)[0] ?? ''
+    const colon = firstLine.search(/[：:]/)
+    const rawTitle = (colon >= 0 ? firstLine.slice(0, colon) : firstLine)
+      .replace(/^#+\s*/, '')
+      .replace(/^\s*\d+\s*[.、)]\s*/, '')
+      .replace(/\*\*/g, '')
+      .trim()
+    const ind = Number(page.ind)
+    return {
+      ind: Number.isFinite(ind) ? ind : pageNo,
+      page: pageNo,
+      title: rawTitle || `第 ${pageNo} 页`,
+      htmlpage: toThumbHtml(page.htmlpage ?? ''),
+    }
+  })
+}
+
 /** 规整多轮历史：过滤空消息并限制最近轮数 */
 export function buildHistory(messages: ChatTurn[], maxTurns = 8): ChatTurn[] {
   return messages

@@ -15,6 +15,22 @@ export interface SseOptions {
   keepalive?: boolean
 }
 
+/** 二进制下载请求：非 2xx 复用 JSON 错误解析，成功返回 Blob */
+export async function fetchBlob(url: string, signal?: SseSignal): Promise<Blob> {
+  const res = await fetch(url, { method: 'GET', signal })
+  if (!res.ok) {
+    let detail = `请求失败（${res.status}）`
+    try {
+      const data = await res.json()
+      if (data?.detail) detail = String(data.detail)
+    } catch {
+      // 忽略解析失败，用默认文案
+    }
+    throw new Error(detail)
+  }
+  return await res.blob()
+}
+
 /** JSON 请求：非 2xx 抛错，返回解析后的 JSON */
 export async function fetchJson<T>(url: string, options: SseOptions = {}): Promise<T> {
   const res = await fetch(url, {

@@ -1,4 +1,4 @@
-import { API_BASE, fetchJson } from './http'
+import { API_BASE, fetchBlob, fetchJson } from './http'
 import type { SseSignal } from './http'
 
 /** videos 目录中的一份生成课件（由后端扫描落盘文件得到） */
@@ -54,4 +54,9 @@ export function generatedHtmlUrl(fileName: string): string {
 /** 课件首屏封面图地址：后端首次访问时渲染并缓存，前端直接当 <img> 用 */
 export function generatedCoverUrl(fileName: string): string {
   return `${API_BASE}/generated/files/${encodeURIComponent(fileName)}/cover`
+}
+
+/** 导出课件为图片版 PPTX：后端逐页渲染后返回文件 Blob */
+export function exportGeneratedPptx(fileName: string): Promise<Blob> {
+  return fetchBlob(`${API_BASE}/generated/files/${encodeURIComponent(fileName)}/pptx`)
 }

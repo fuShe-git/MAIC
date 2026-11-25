@@ -48,6 +48,9 @@ const zh = {
   'history.deleteDesc': '删除后课程文件将从本机移除，且不可恢复。',
   'history.deleteFailed': '删除失败，请稍后重试',
   'history.renameFailed': '改名失败，请稍后重试',
+  'history.exportPpt': '导出 PPT',
+  'history.exporting': '正在导出…',
+  'history.exportPptFailed': '导出 PPT 失败，请稍后重试',
   'history.newFolder': '新建文件夹...',
 
   'folder.new': '新建文件夹',
@@ -188,6 +191,9 @@ const en: Record<MessageKey, string> = {
   'history.deleteDesc': 'The lesson file will be removed from this device and cannot be recovered.',
   'history.deleteFailed': 'Delete failed, please try again later',
   'history.renameFailed': 'Rename failed, please try again later',
+  'history.exportPpt': 'Export PPT',
+  'history.exporting': 'Exporting…',
+  'history.exportPptFailed': 'Failed to export PPT, please try again later',
   'history.newFolder': 'New folder...',
 
   'folder.new': 'New folder',

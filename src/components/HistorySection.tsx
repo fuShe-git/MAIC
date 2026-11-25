@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { useI18n } from '../i18n/context'
 import type { Lang, MessageKey } from '../i18n/messages'
-import { deleteGeneratedFile, generatedCoverUrl, renameGeneratedFile } from '../api/generated'
+import {
+  deleteGeneratedFile,
+  exportGeneratedPptx,
+  generatedCoverUrl,
+  renameGeneratedFile,
+} from '../api/generated'
 import type { GeneratedCourse } from '../api/generated'
 import {
   assignCourseToFolder,
@@ -126,6 +131,31 @@ function PencilIcon() {
   )
 }
 
+/** 导出 PPT：幻灯片 + 向下箭头 */
+function PptIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect
+        x="3.6"
+        y="4.6"
+        width="16.8"
+        height="11.4"
+        rx="1.6"
+        stroke="currentColor"
+        strokeWidth="1.6"
+      />
+      <path
+        d="M12 7.8v4.6m0 0-1.8-1.8m1.8 1.8 1.8-1.8"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M8 19.4h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -226,6 +256,10 @@ export default function HistorySection({
   const [folderDeleteError, setFolderDeleteError] = useState('')
   // 轻提示：改名等接口失败的兜底反馈
   const [toast, setToast] = useState('')
+  // 正在导出 PPT 的课件 id：用于禁用按钮、防止重复点击
+  const [exportingId, setExportingId] = useState('')
+  // 状态更新是异步的，用 ref 挡住同一帧内的重复点击
+  const exportingRef = useRef(false)
 
   const courseById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items])
   const assignedIds = useMemo(
@@ -334,6 +368,36 @@ export default function HistorySection({
   /** 课件展示名：备注名优先，否则用课件标题 */
   function displayName(course: GeneratedCourse): string {
     return course.remark || course.topic
+  }
+
+  /** 导出课件为图片版 PPTX：成功后用临时 object URL 触发浏览器下载 */
+  async function handleExportPpt(course: GeneratedCourse) {
+    if (exportingRef.current) return
+    exportingRef.current = true
+    setExportingId(course.id)
+    try {
+      const blob = await exportGeneratedPptx(course.fileName)
+      // 文件名用展示名并去掉文件系统非法字符，空名时回退课程 id
+      const baseName =
+        displayName(course)
+          .replace(/[\\/:*?"<>|]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim() || course.id
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${baseName}.pptx`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      // 立即 revoke 可能打断部分浏览器的下载，延迟释放
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      setToast(t('history.exportPptFailed'))
+    } finally {
+      exportingRef.current = false
+      setExportingId('')
+    }
   }
 
   /** 课件所在文件夹 id；空串表示未分组 */
@@ -583,7 +647,7 @@ export default function HistorySection({
     if (failedCount > 0) setToast(t('folder.deleteFailed', { n: failedCount }))
   }
 
-  /** 课程卡片：封面 + 时间 + 标题 + 悬浮操作（移动 / 改名 / 删除） */
+  /** 课程卡片：封面 + 时间 + 标题 + 悬浮操作（移动 / 改名 / 导出 PPT / 删除） */
   function renderCourseCard(course: GeneratedCourse) {
     const failed = Boolean(failedCovers[course.id])
     const loadedCover = Boolean(loadedCovers[course.id])
@@ -593,6 +657,7 @@ export default function HistorySection({
     const name = displayName(course)
     const menuOpen = menuId === course.id
     const renaming = renamingId === course.id
+    const exporting = exportingId === course.id
     const currentFolderId = folderIdOf(course.id)
 
     return (
@@ -661,6 +726,17 @@ export default function HistorySection({
               onClick={() => startRename(course)}
             >
               <PencilIcon />
+            </button>
+            <button
+              className="history-act-btn"
+              type="button"
+              title={exporting ? t('history.exporting') : t('history.exportPpt')}
+              aria-label={t('history.exportPpt')}
+              aria-busy={exporting}
+              disabled={Boolean(exportingId)}
+              onClick={() => handleExportPpt(course)}
+            >
+              <PptIcon />
             </button>
             <button
               className="history-act-btn is-danger"

@@ -4,8 +4,9 @@
 - GET /generated/files/{file_name}/html 返回课件 HTML 文本，供播放器同源 iframe 加载
   （同源才能读取 contentDocument，实现页码同步与练习态检测）；
 - GET /generated/files/{file_name}/cover 返回课件首屏封面 PNG（首屏渲染 → 落盘缓存）；
+- GET /generated/files/{file_name}/pptx 导出图片版 PPTX（逐页截图 → python-pptx，按课件缓存）；
 - PATCH /generated/files/{file_name} 修改课件备注名（落库，列表接口回带）；
-- DELETE /generated/files/{file_name} 删除课件（HTML + 封面缓存 + 资产库记录）；
+- DELETE /generated/files/{file_name} 删除课件（HTML + 封面/PPTX 缓存 + 资产库记录）；
 - 文件名走严格白名单（32 位 hex + .html），杜绝路径穿越；
 - 文件 IO 用 asyncio.to_thread 包裹，异常只记日志并返回安全默认值，不抛 500。
 """
@@ -15,6 +16,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -22,17 +24,25 @@ from pydantic import BaseModel
 
 from app.core.paths import AUDIO_DIR, VIDEOS_DIR
 from app.storage import course_db, folder_db
+from app.tools.pptExport import cache_is_fresh, export_pptx
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/generated", tags=["generated"])
 
 # 封面缓存目录：放在 videos 的隐藏子目录里，扫描 *.html 时不会误把它当课件
 COVERS_DIR = VIDEOS_DIR / ".covers"
+# PPTX 导出缓存：同样放在隐藏子目录，按课件文件名 stem 一一对应
+PPTX_CACHE_DIR = VIDEOS_DIR / ".pptx"
 # 与课件画布一致的 16:9 视口，截出来的首屏正好适合做卡片封面
 _COVER_VIEWPORT = (1280, 720)
 _COVER_TIMEOUT = 25.0
 # 无头浏览器启动开销大：同一时刻只渲染一张封面，其余请求排队等缓存
 _cover_lock = asyncio.Lock()
+# PPT 导出要逐页渲染，开销更大：同一时刻只导出一份，其余请求排队等缓存
+_pptx_lock = asyncio.Lock()
+# 下载文件名里不能出现的字符（Windows 文件系统限制）
+_UNSAFE_NAME_RE = re.compile(r'[\\/:*?"<>|\r\n]+')
+_DOWNLOAD_NAME_MAX = 80
 
 # 生成流程统一用 uuid4().hex + .html 命名，按此白名单校验可访问文件
 _FILE_NAME_RE = re.compile(r"^[0-9a-f]{32}\.html$")
@@ -67,6 +77,18 @@ def _read_topic(path: Path) -> str:
 def _cover_path(html_path: Path) -> Path:
     """课件首屏封面的缓存路径（按文件名 stem 一一对应）。"""
     return COVERS_DIR / f"{html_path.stem}.png"
+
+
+def _pptx_cache_path(html_path: Path) -> Path:
+    """PPTX 导出缓存的路径（按文件名 stem 一一对应）。"""
+    return PPTX_CACHE_DIR / f"{html_path.stem}.pptx"
+
+
+def _safe_download_name(title: str, fallback: str) -> str:
+    """把课件标题收拾成可用的下载文件名（不含扩展名）。"""
+    name = _UNSAFE_NAME_RE.sub(" ", title or "").strip()
+    name = re.sub(r"\s+", " ", name)[:_DOWNLOAD_NAME_MAX].strip()
+    return name or fallback
 
 
 def _cover_is_fresh(cover: Path, html_path: Path) -> bool:
@@ -183,6 +205,54 @@ async def get_generated_cover(file_name: str):
     return Response(content=png, media_type="image/png", headers=headers)
 
 
+@router.get("/files/{file_name}/pptx")
+async def download_generated_pptx(file_name: str):
+    """把课件导出为图片版 PPTX 并下载；结果按课件缓存，重复下载直接命中。"""
+    if not _FILE_NAME_RE.match(file_name):
+        raise HTTPException(status_code=400, detail="非法的课件文件名")
+    html_path = VIDEOS_DIR / file_name
+    if not await asyncio.to_thread(html_path.is_file):
+        raise HTTPException(status_code=404, detail="课件文件不存在")
+
+    cache_path = _pptx_cache_path(html_path)
+    if not await asyncio.to_thread(cache_is_fresh, cache_path, html_path):
+        async with _pptx_lock:
+            # 排队期间可能已被前面的请求导出，二次确认避免重复渲染
+            if not await asyncio.to_thread(cache_is_fresh, cache_path, html_path):
+                try:
+                    html = await asyncio.to_thread(
+                        lambda: html_path.read_text(encoding="utf-8", errors="replace")
+                    )
+                    title = await asyncio.to_thread(_read_topic, html_path)
+                    await export_pptx(
+                        html, PPTX_CACHE_DIR, title, file_stem=html_path.stem
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=503, detail=str(exc))
+                except Exception:
+                    logger.warning("PPT 导出失败：%s", html_path, exc_info=True)
+                    raise HTTPException(status_code=503, detail="PPT 导出失败，请稍后重试")
+
+    if not await asyncio.to_thread(cache_path.is_file):
+        raise HTTPException(status_code=503, detail="PPT 导出失败，请稍后重试")
+
+    # 下载名优先用课件标题；ASCII 回退名用稳定的文件 stem，避免响应头乱码
+    title = await asyncio.to_thread(_read_topic, html_path)
+    download_name = _safe_download_name(title, html_path.stem)
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="{html_path.stem}.pptx"; '
+            f"filename*=UTF-8''{quote(download_name + '.pptx', safe='')}"
+        ),
+        "Cache-Control": "no-store",
+    }
+    return FileResponse(
+        cache_path,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers=headers,
+    )
+
+
 @router.patch("/files/{file_name}")
 async def update_generated_remark(file_name: str, payload: RemarkPayload):
     """修改课件备注名：落库后，列表接口会带出新名字。"""
@@ -215,8 +285,9 @@ async def delete_generated_file(file_name: str):
 
     def _remove_files() -> None:
         html_path.unlink(missing_ok=True)
-        # 封面缓存与该课件一一对应，一并清掉避免残留
+        # 封面/PPTX 缓存与该课件一一对应，一并清掉避免残留
         _cover_path(html_path).unlink(missing_ok=True)
+        _pptx_cache_path(html_path).unlink(missing_ok=True)
 
     try:
         await asyncio.to_thread(_remove_files)

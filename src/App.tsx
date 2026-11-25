@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cancelGeneration, chatStream, confirmOutline, retryFailedPages } from './api/chat'
 import type { ChatResponse, OutlineModule, ProgressEvent, ProgressStep } from './api/chat'
 import { getCourse } from './api/courses'
@@ -129,7 +129,10 @@ function App() {
   const [llmConfigs, setLlmConfigs] = useState<LlmConfig[]>([])
   // 是否已完成一次配置拉取：未完成前不要用「系统默认」覆盖用户记住的模型
   const [llmConfigsLoaded, setLlmConfigsLoaded] = useState(false)
-  const [modelGroups, setModelGroups] = useState<ProviderOption[]>(() => buildModelGroups(t, []))
+  // 最近一次拉取是否成功：失败时列表为空是「接口不可用」，不是「用户删光了配置」
+  const [llmConfigsAvailable, setLlmConfigsAvailable] = useState(true)
+  // 同步派生，避免配置到达与分组重建之间出现「只有系统默认」的中间帧误伤用户选择
+  const modelGroups = useMemo(() => buildModelGroups(t, llmConfigs), [t, llmConfigs])
   const [modelId, setModelId] = useState(() => {
     try {
       return localStorage.getItem(MODEL_STORAGE_KEY) || DEFAULT_MODEL_ID
@@ -145,8 +148,15 @@ function App() {
   /** 拉取数据库里的服务商 / 模型配置；后端不可用时保留「系统默认」兜底项 */
   const refreshLlmConfigs = useCallback(() => {
     listLlmConfigs()
-      .then(setLlmConfigs)
-      .catch(() => setLlmConfigs([]))
+      .then((items) => {
+        setLlmConfigs(items)
+        setLlmConfigsAvailable(true)
+      })
+      .catch(() => {
+        setLlmConfigs([])
+        // 接口失败 ≠ 配置被删空：记住的选择必须保留，不能被误判为失效
+        setLlmConfigsAvailable(false)
+      })
       .finally(() => setLlmConfigsLoaded(true))
   }, [])
 
@@ -155,28 +165,30 @@ function App() {
     refreshLlmConfigs()
   }, [refreshLlmConfigs])
 
-  // 语种切换或配置变更后重建服务商 / 模型分组
+  // 仅在「拉取成功」且记住的模型确实已被删除时回退，并清掉本地覆盖
   useEffect(() => {
-    setModelGroups(buildModelGroups(t, llmConfigs))
-  }, [t, llmConfigs])
-
-  // 配置加载完成或被删除后，若记住的模型已不存在则回退「系统默认」
-  useEffect(() => {
-    if (!llmConfigsLoaded) return
+    if (!llmConfigsLoaded || !llmConfigsAvailable) return
     const allModels = modelGroups.flatMap((group) => group.models)
     if (allModels.length > 0 && !allModels.some((model) => model.id === modelId)) {
-      setModelId(allModels[0].id)
+      setModelId(DEFAULT_MODEL_ID)
+      try {
+        localStorage.removeItem(MODEL_STORAGE_KEY)
+      } catch {
+        // 隐私模式下忽略
+      }
     }
-  }, [llmConfigsLoaded, modelGroups, modelId])
+  }, [llmConfigsLoaded, llmConfigsAvailable, modelGroups, modelId])
 
-  // 记住用户选择的模型
-  useEffect(() => {
+  /** 只有用户主动选择才写入 localStorage；自动回退 / 配置刷新都不改写偏好 */
+  function selectModel(id: string) {
+    setModelId(id)
     try {
-      localStorage.setItem(MODEL_STORAGE_KEY, modelId)
+      if (id === DEFAULT_MODEL_ID) localStorage.removeItem(MODEL_STORAGE_KEY)
+      else localStorage.setItem(MODEL_STORAGE_KEY, id)
     } catch {
       // 隐私模式下忽略
     }
-  }, [modelId])
+  }
 
   // 点击外部或按 Esc 收起模型菜单
   useEffect(() => {
@@ -564,11 +576,9 @@ function App() {
   const activeProvider = visibleProviders.find((group) => group.id === activeProviderId) ?? visibleProviders[0]
 
   const toggleModelMenu = () => {
-    const groups = buildModelGroups(t, llmConfigs)
-    setModelGroups(groups)
-    const models = groups.flatMap((group) => group.models)
+    const models = modelGroups.flatMap((group) => group.models)
+    // 只定位展开哪个服务商；不在这里改 modelId，避免配置刷新失败时覆盖用户偏好
     const current = models.find((model) => model.id === modelId) ?? models[0]
-    if (current && current.id !== modelId) setModelId(current.id)
     setActiveProviderId(current?.providerId ?? DEFAULT_PROVIDER_ID)
     setProviderSearch('')
     setModelMenuOpen((prev) => !prev)
@@ -724,7 +734,7 @@ function App() {
                         role="option"
                         aria-selected={model.id === modelId}
                         onClick={() => {
-                          setModelId(model.id)
+                          selectModel(model.id)
                           setModelMenuOpen(false)
                         }}
                       >

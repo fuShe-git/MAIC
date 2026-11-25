@@ -9,6 +9,8 @@ interface CourseApi {
   setAutoPlay?: (enabled: boolean) => void
   setRate?: (rate: number) => void
   setVolume?: (volume: number) => void
+  /** 直接切到指定页（0 起）；旧课件没有该接口 */
+  goTo?: (index: number) => void
 }
 
 type CourseWindow = Window & { __coursePlayer?: CourseApi }
@@ -92,6 +94,17 @@ export function applyCourseSettings(
     setLegacyAutoPlayGuard(doc, settings.autoPlay)
   }
   return false
+}
+
+/**
+ * 请求课件切到指定页（0 起）。
+ * 返回 true 表示新课件已接住请求；旧课件返回 false，由调用方用 prev/next 兼容。
+ */
+export function goToCoursePage(frame: HTMLIFrameElement | null, index: number): boolean {
+  const api = getCourseApi(frame)
+  if (!api?.goTo || !Number.isFinite(index)) return false
+  api.goTo(Math.max(0, Math.trunc(index)))
+  return true
 }
 
 /** 视频兜底源的倍速与音量 */

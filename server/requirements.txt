@@ -16,3 +16,5 @@ edge-tts>=6.1
 mutagen>=1.47
 # pip 自带 FFmpeg 静态二进制，找不到系统 ffmpeg 时兜底
 imageio-ffmpeg>=0.4
+# 课件导出 PPTX
+python-pptx>=1.0

@@ -40,6 +40,15 @@ export function IconDiscussion() {
   )
 }
 
+export function IconOutline() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 5.5c2.6-.9 5.2-.9 8 0 2.8-.9 5.4-.9 8 0v12c-2.6-.9-5.2-.9-8 0-2.8-.9-5.4-.9-8 0v-12Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M12 5.5v12" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  )
+}
+
 export function IconAutoPlay() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">

@@ -168,14 +168,30 @@ _PAGE_TEMPLATE = """<!DOCTYPE html>
   prevBtn.addEventListener('click', function () { play(idx - 1); });
   nextBtn.addEventListener('click', function () { play(idx + 1); });
 
+  // 父页面大纲直接跳页：只切画面并停止音频，是否续播由父页面按跳转前状态决定
+  function goTo(i) {
+    var next = parseInt(i, 10);
+    if (!isFinite(next) || !pages.length) return;
+    next = Math.max(0, Math.min(pages.length - 1, next));
+    player.pause();
+    clearTimeout(timer); timer = null;
+    remaining = 0;
+    loadedInd = -1;
+    idx = next;
+    render();
+    playing = false;
+    syncBtn();
+  }
+
   render();
   syncBtn();
 
-  // 父页面通过同源 iframe 调用，统一控制自动播放 / 倍速 / 音量
+  // 父页面通过同源 iframe 调用，统一控制自动播放 / 倍速 / 音量 / 跳页
   window.__coursePlayer = {
     setAutoPlay: function (value) { autoPlay = !!value; },
     setRate: function (value) { rate = clamp(value || 1, 0.25, 4); applyAudioSettings(); },
-    setVolume: function (value) { volume = clamp(value || 0, 0, 1); applyAudioSettings(); }
+    setVolume: function (value) { volume = clamp(value || 0, 0, 1); applyAudioSettings(); },
+    goTo: goTo
   };
 
   // 重新观看：从第一页重播（前端底部「重新观看」按钮派发该事件）

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { PageItem } from '../api/chat'
-import { parsePageNumber } from '../utils/courseContext'
+import { buildOutlineItems, parsePageNumber, parsePageTotal } from '../utils/courseContext'
+import { goToCoursePage } from '../utils/coursewareControl'
 import { pickCourseSource } from '../utils/courseSource'
 import type { CourseSourceKind } from '../utils/courseSource'
 import { useAutoHideControls } from '../hooks/useAutoHideControls'
@@ -9,6 +10,7 @@ import { useFullscreen, usePlaybackSettings } from '../hooks/usePlaybackSettings
 import DiscussionPanel from './DiscussionPanel'
 import LectureControls from './LectureControls'
 import type { LectureControlsProps } from './LectureControls'
+import LectureOutline from './LectureOutline'
 import LectureTranscript from './LectureTranscript'
 import './LecturePlayer.css'
 
@@ -43,6 +45,8 @@ const LOWER_DEFAULT_HEIGHT = 240
  */
 const CANVAS_WIDTH = 1170
 const CANVAS_HEIGHT = 658
+/** 左侧大纲默认宽度，拖拽范围由 LectureOutline 限制 */
+const OUTLINE_DEFAULT_WIDTH = 208
 
 export default function LecturePlayer({
   topic,
@@ -71,6 +75,12 @@ export default function LecturePlayer({
   const [lowerCollapsed, setLowerCollapsed] = useState(false)
   const [lowerHeight, setLowerHeight] = useState(LOWER_DEFAULT_HEIGHT)
   const [discussionWidth, setDiscussionWidth] = useState(300)
+  /** 大纲默认展开；窄屏默认收起，避免一进页面就遮住课件 */
+  const [outlineOpen, setOutlineOpen] = useState(
+    () => typeof window === 'undefined' || window.innerWidth > 900,
+  )
+  /** 左侧大纲宽度，拖动右边缘时更新 */
+  const [outlineWidth, setOutlineWidth] = useState(OUTLINE_DEFAULT_WIDTH)
 
   // 展开讨论时锁住页面滚动，只保留消息列表内部滚动，避免整页出现滚动条
   useEffect(() => {
@@ -177,6 +187,7 @@ export default function LecturePlayer({
     () => pageList.filter((page) => page.htmlpage.trim()),
     [pageList],
   )
+  const outlineItems = useMemo(() => buildOutlineItems(pageList), [pageList])
 
   const markFailed = useCallback((kind: CourseSourceKind) => {
     setFailed((prev) => (prev.includes(kind) ? prev : [...prev, kind]))
@@ -270,6 +281,69 @@ export default function LecturePlayer({
     [markFailed, syncFromFrame],
   )
 
+  /**
+   * 大纲跳页：新课件直接调用 goTo；旧课件只能点内部上一页/下一页，
+   * 用有界循环补齐距离，并按跳转前的播放状态决定是否恢复。
+   */
+  const jumpToPage = useCallback(
+    (page: number) => {
+      if (!Number.isFinite(page) || page < 1) return
+      if (source.kind === 'pages') {
+        setPageIndex(page - 1)
+        return
+      }
+      if (source.kind !== 'html') return
+
+      const frame = frameRef.current
+      const doc = frame?.contentDocument
+      if (!doc) {
+        markFailed('html')
+        return
+      }
+
+      const wasPlaying = playing && !quizMode
+      manualNavRef.current = true
+      const jumped = goToCoursePage(frame, page - 1)
+
+      if (!jumped) {
+        const current = parsePageNumber(doc.getElementById('pageNum')?.textContent ?? '') ?? 1
+        const delta = page - current
+        const buttonId = delta > 0 ? 'next' : 'prev'
+        const times = Math.min(Math.abs(delta), outlineItems.length)
+        for (let i = 0; i < times; i += 1) doc.getElementById(buttonId)?.click()
+        // 旧课件每次 click 都会启动音频：原本暂停时，跳页后补一次暂停
+        const start = doc.getElementById('start')
+        if (!wasPlaying && start?.textContent?.trim() === '暂停') start.click()
+      } else if (wasPlaying) {
+        doc.getElementById('start')?.click()
+      }
+
+      window.setTimeout(() => {
+        syncFromFrame()
+        manualNavRef.current = false
+      }, 0)
+    },
+    [
+      source.kind,
+      playing,
+      quizMode,
+      outlineItems.length,
+      markFailed,
+      syncFromFrame,
+    ],
+  )
+
+  /** 宽屏允许大纲与讨论区同时展开；窄屏两者都是抽屉，打开其一收起另一 */
+  const toggleOutline = useCallback(() => {
+    if (!outlineOpen && window.innerWidth <= 900) setDiscussionOpen(false)
+    setOutlineOpen((value) => !value)
+  }, [outlineOpen])
+
+  const toggleDiscussion = useCallback(() => {
+    if (!discussionOpen && window.innerWidth <= 900) setOutlineOpen(false)
+    setDiscussionOpen((value) => !value)
+  }, [discussionOpen])
+
   /** 讨论输入框聚焦时暂停讲解，避免音频与讨论互相干扰 */
   const pauseCourseware = useCallback(() => {
     if (source.kind === 'video') {
@@ -304,13 +378,19 @@ export default function LecturePlayer({
     }
   }
 
-  const [cur, total] = pageLabel.split('/').map((part) => parseInt(part.trim(), 10))
-  const atFirst = Number.isFinite(cur) ? cur <= 1 : true
-  const atLast = Number.isFinite(cur) && Number.isFinite(total) ? cur >= total : false
+  const cur = parsePageNumber(pageLabel)
+  const total = parsePageTotal(pageLabel)
+  const atFirst = cur === null ? true : cur <= 1
+  const atLast = cur !== null && total !== null ? cur >= total : false
   const pageTotal = usablePages.length
   // 逐页兜底模式下页码由前端控制，讨论区与讲解词也跟着当前页走
   const activePageLabel =
     source.kind === 'pages' ? `${pageIndex + 1} / ${pageTotal || 1}` : pageLabel
+  // 视频与空白兜底没有分页概念；单页课件也不展示大纲
+  const showOutline =
+    outlineItems.length > 1 && (source.kind === 'html' || source.kind === 'pages')
+  const outlineVisible = showOutline && outlineOpen
+  const outlineCurrentPage = source.kind === 'pages' ? pageIndex + 1 : cur
   const transcript = useMemo(() => {
     const current = parsePageNumber(activePageLabel)
     if (!current) return ''
@@ -333,6 +413,9 @@ export default function LecturePlayer({
   const controlProps: LectureControlsProps = {
     kind: source.kind,
     pageLabel: activePageLabel,
+    outlineAvailable: showOutline,
+    outlineOpen: outlineVisible,
+    onToggleOutline: toggleOutline,
     playing,
     atFirst,
     atLast,
@@ -344,7 +427,7 @@ export default function LecturePlayer({
     quizMode,
     onRewatch: handleRewatch,
     discussionOpen,
-    onToggleDiscussion: () => setDiscussionOpen((value) => !value),
+    onToggleDiscussion: toggleDiscussion,
     autoPlay,
     onToggleAutoPlay: toggleAutoPlay,
     rate,
@@ -372,8 +455,13 @@ export default function LecturePlayer({
   return (
     <div
       ref={rootRef}
-      className={`lp${discussionOpen ? ' has-discussion' : ''}${lowerCollapsed ? ' is-lower-collapsed' : ''}`}
-      style={{ '--dp-width': `${discussionWidth}px` } as CSSProperties}
+      className={`lp${outlineVisible ? ' has-outline' : ''}${discussionOpen ? ' has-discussion' : ''}${lowerCollapsed ? ' is-lower-collapsed' : ''}`}
+      style={
+        {
+          '--dp-width': `${discussionWidth}px`,
+          '--lp-outline-w': outlineVisible ? `${outlineWidth}px` : '0px',
+        } as CSSProperties
+      }
     >
       <header className="lp-top">
         <button className="lp-back" type="button" onClick={onBack} aria-label="返回主页面">
@@ -392,6 +480,18 @@ export default function LecturePlayer({
           <h1 className="lp-title">{topic || '课堂讲解'}</h1>
         </div>
       </header>
+
+      {outlineVisible && (
+        <LectureOutline
+          items={outlineItems}
+          currentPage={outlineCurrentPage}
+          width={outlineWidth}
+          onWidthChange={setOutlineWidth}
+          disabled={source.kind === 'html' && !frameReady}
+          onSelect={jumpToPage}
+          onCollapse={() => setOutlineOpen(false)}
+        />
+      )}
 
       <main className={`lp-stage${discussionOpen ? ' has-discussion' : ''}`}>
         <div className="lp-stage-main">

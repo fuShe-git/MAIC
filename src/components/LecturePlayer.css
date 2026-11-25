@@ -2,10 +2,12 @@
 
 .lp {
   --lp-lower-h: 240px;
+  --lp-outline-w: 0px;
   position: relative;
   height: 100svh;
   min-height: 560px;
   display: grid;
+  grid-template-columns: var(--lp-outline-w) minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   background:
@@ -27,6 +29,7 @@
 .lp-top {
   position: relative;
   z-index: 10;
+  grid-column: 1 / -1;
   flex: none;
   display: flex;
   align-items: center;
@@ -72,6 +75,7 @@
 
 .lp-heading {
   min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -98,9 +102,16 @@
   padding-right: calc(22px + var(--dp-width));
 }
 
+/* 大纲展开时占用左侧固定列，舞台与底部讲稿保留在右列 */
+.lp.has-outline {
+  --lp-outline-w: 208px;
+}
+
 /* ---------- 中间内容区 ---------- */
 
 .lp-stage {
+  grid-column: 2;
+  grid-row: 2;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -120,6 +131,8 @@
 /* 底部控制条与讲解词：同宽紧贴，对话栏展开时整体让位 */
 
 .lp-bottom {
+  grid-column: 2;
+  grid-row: 3;
   min-width: 0;
   margin-top: 10px;
   display: flex;
@@ -417,6 +430,12 @@
   border-color: rgba(53, 214, 198, 0.42);
   background: rgba(53, 214, 198, 0.12);
   color: #35d6c6;
+}
+
+.lp-ctrl.is-outline.is-active {
+  border-color: rgba(139, 123, 255, 0.5);
+  background: rgba(139, 123, 255, 0.16);
+  color: #cfc6ff;
 }
 
 .lp-ctrl:hover:not(:disabled) {
@@ -746,9 +765,35 @@
 
 /* ---------- 小屏适配 ---------- */
 
+@media (max-width: 1180px) {
+  .lp.has-outline {
+    --lp-outline-w: 184px;
+  }
+
+  .lp.has-outline .lp-stage {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .lp.has-outline.has-discussion .lp-stage {
+    padding-right: calc(16px + var(--dp-width));
+  }
+}
+
 @media (max-width: 900px) {
   .lp-volume-range {
     height: 64px;
+  }
+
+  /* 窄屏不占列：大纲改为左侧抽屉，舞台保持全宽 */
+  .lp,
+  .lp.has-outline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lp-stage,
+  .lp-bottom {
+    grid-column: 1;
   }
 }
 

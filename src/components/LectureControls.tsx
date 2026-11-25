@@ -8,6 +8,7 @@ import {
   IconFullscreen,
   IconMute,
   IconNext,
+  IconOutline,
   IconPause,
   IconPlay,
   IconPrev,
@@ -17,6 +18,10 @@ import {
 export interface LectureControlsProps {
   kind: CourseSourceKind
   pageLabel: string
+  /** 有分页课件时，在底部控制条显示大纲开关 */
+  outlineAvailable?: boolean
+  outlineOpen?: boolean
+  onToggleOutline?: () => void
   playing: boolean
   atFirst: boolean
   atLast: boolean
@@ -63,6 +68,9 @@ function formatTime(seconds: number): string {
 export default function LectureControls({
   kind,
   pageLabel,
+  outlineAvailable = false,
+  outlineOpen = false,
+  onToggleOutline,
   playing,
   atFirst,
   atLast,
@@ -256,6 +264,18 @@ export default function LectureControls({
   return (
     <div className="lp-statusbar">
       <div className="lp-bar-left">
+        {outlineAvailable && (
+          <button
+            className={`lp-ctrl is-icon is-outline${outlineOpen ? ' is-active' : ''}`}
+            type="button"
+            onClick={onToggleOutline}
+            aria-label={outlineOpen ? '收起课件大纲' : '展开课件大纲'}
+            aria-expanded={outlineOpen}
+            title={outlineOpen ? '收起大纲' : '展开大纲'}
+          >
+            <IconOutline />
+          </button>
+        )}
         <span className="lp-page">{pageLabel}</span>
       </div>
 
