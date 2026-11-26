@@ -42,7 +42,7 @@ export default function ThemeSelectPanel({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1 pw-scroll">
-        {busy && themes.length === 0 ? (
+        {busy ? (
           <GeneratingMark
             title={t('themeSelect.generatingTitle')}
             subtitle={t('themeSelect.generatingSubtitle')}
@@ -73,35 +73,127 @@ export default function ThemeSelectPanel({
                     ) : null}
                   </div>
 
+                  <p className="pw-theme-label mb-2 mt-0">{t('themeSelect.pagePreview')}</p>
                   <div
-                    className="mb-3 flex h-20 items-end gap-1 overflow-hidden rounded-xl border border-white/60 p-2 shadow-inner"
+                    className="pw-theme-page mb-3 overflow-hidden rounded-xl border border-white/60 shadow-inner"
                     style={{ background: theme.previewColors.background }}
                   >
-                    <span
-                      className="h-9 w-2/5 rounded-md"
-                      style={{ background: theme.previewColors.primary }}
-                    />
-                    <span className="flex flex-1 flex-col gap-1.5">
+                    <div className="flex items-center justify-between px-3 pt-2.5">
                       <span
-                        className="h-2 rounded-full opacity-70"
+                        className="text-[9px] font-semibold tracking-wide"
+                        style={{ color: theme.previewColors.primary }}
+                      >
+                        MAIC · PAGE 01
+                      </span>
+                      <span
+                        className="h-1.5 w-8 rounded-full opacity-60"
                         style={{ background: theme.previewColors.text }}
                       />
+                    </div>
+                    <div className="px-3 pt-2">
                       <span
-                        className="h-2 w-4/5 rounded-full opacity-40"
-                        style={{ background: theme.previewColors.text }}
+                        className="block h-2.5 w-3/5 rounded-full"
+                        style={{ background: theme.previewColors.primary }}
                       />
                       <span
-                        className="mt-auto h-3 rounded-full"
+                        className="mt-1.5 block h-1.5 w-4/5 rounded-full opacity-50"
+                        style={{ background: theme.previewColors.text }}
+                      />
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 px-3">
+                      <div
+                        className="rounded-lg p-2"
+                        style={{ background: theme.previewColors.primary }}
+                      >
+                        <span className="block h-1.5 w-2/3 rounded-full bg-white/80" />
+                        <span className="mt-1.5 block h-1 w-full rounded-full bg-white/45" />
+                        <span className="mt-1 block h-1 w-4/5 rounded-full bg-white/30" />
+                      </div>
+                      <div
+                        className="rounded-lg border p-2"
+                        style={{
+                          borderColor: theme.previewColors.accent,
+                          background: theme.previewColors.background,
+                        }}
+                      >
+                        <span
+                          className="block h-1.5 w-1/2 rounded-full"
+                          style={{ background: theme.previewColors.accent }}
+                        />
+                        <span
+                          className="mt-1.5 block h-1 w-full rounded-full opacity-40"
+                          style={{ background: theme.previewColors.text }}
+                        />
+                        <span
+                          className="mt-1 block h-1 w-3/4 rounded-full opacity-30"
+                          style={{ background: theme.previewColors.text }}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between px-3 pb-2.5">
+                      <span
+                        className="h-2 w-16 rounded-full"
                         style={{ background: theme.previewColors.accent }}
                       />
-                    </span>
+                      <span
+                        className="text-[8px] opacity-60"
+                        style={{ color: theme.previewColors.text }}
+                      >
+                        01 / 08
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full" style={{ background: theme.previewColors.primary }} />
+                  </div>
+
+                  <div className="mb-3 grid grid-cols-2 gap-x-3 gap-y-1.5">
+                    {[
+                      { key: 'background', label: t('themeSelect.colorBackground'), value: theme.previewColors.background },
+                      { key: 'primary', label: t('themeSelect.colorPrimary'), value: theme.previewColors.primary },
+                      { key: 'accent', label: t('themeSelect.colorAccent'), value: theme.previewColors.accent },
+                      { key: 'text', label: t('themeSelect.colorText'), value: theme.previewColors.text },
+                    ].map((color) => (
+                      <div key={color.key} className="flex min-w-0 items-center gap-1.5">
+                        <span
+                          className="h-3.5 w-3.5 shrink-0 rounded border border-black/10"
+                          style={{ background: color.value }}
+                        />
+                        <span className="shrink-0 text-[10px] text-[var(--text-faint)]">
+                          {color.label}
+                        </span>
+                        <code className="truncate text-[10px] text-[var(--text-dim)]">
+                          {color.value.toUpperCase()}
+                        </code>
+                      </div>
+                    ))}
                   </div>
 
                   <h3 className="m-0 text-[15px] font-semibold text-[var(--text)]">{theme.name}</h3>
-                  <p className="mt-1 text-[12px] leading-5 text-[var(--text-dim)]">{theme.description}</p>
-                  <p className="mt-2 line-clamp-3 text-[11px] leading-5 text-[var(--text-faint)]">
-                    {theme.stylePrompt}
-                  </p>
+
+                  <div className="mt-2">
+                    <p className="pw-theme-label">{t('themeSelect.scene')}</p>
+                    <p className="m-0 text-[12px] leading-5 text-[var(--text-dim)]">{theme.description}</p>
+                  </div>
+
+                  <div className="mt-2">
+                    <p className="pw-theme-label">{t('themeSelect.styleSpec')}</p>
+                    <div className="pw-theme-hint">
+                      <p className="m-0 line-clamp-3 text-[11px] leading-5 text-[var(--text-faint)]">
+                        {theme.stylePrompt}
+                      </p>
+                      <div className="pw-theme-tooltip" role="tooltip">
+                        <strong className="pw-theme-tooltip-title">
+                          {theme.name} · {t('themeSelect.styleSpec')}
+                        </strong>
+                        <p className="pw-theme-tooltip-text">{theme.stylePrompt}</p>
+                        <p className="pw-theme-tooltip-meta">
+                          {t('themeSelect.scene')}：{theme.description}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="pw-theme-hint-tip mt-1 text-[10px] text-[var(--text-faint)]">
+                      {t('themeSelect.hoverForFull')}
+                    </p>
+                  </div>
                 </button>
               )
             })}
@@ -132,7 +224,10 @@ export default function ThemeSelectPanel({
             <button
               type="button"
               className="cursor-pointer rounded-xl border border-[#DAD4FF] bg-[#F5F2FF] px-3 py-2 text-[13px] font-medium text-[#5B45E0] transition hover:bg-[#EBE5FF] disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => onRegenerateTheme(feedback.trim())}
+              onClick={() => {
+                onRegenerateTheme(feedback.trim())
+                setFeedback('')
+              }}
               disabled={!canRegenerate}
             >
               {t('themeSelect.regenerate')}

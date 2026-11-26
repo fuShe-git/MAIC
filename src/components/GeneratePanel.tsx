@@ -82,8 +82,7 @@ export default function GeneratePanel({
   return (
     <section className="pw-fade-in flex min-h-0 flex-1 flex-col gap-3">
       <header className="shrink-0">
-        <h2 className="m-0 text-[18px] font-semibold text-[var(--text)]">课件生成</h2>
-        <p className="mt-1 text-[13px] leading-5 text-[var(--text-dim)]">
+        <p className="m-0 text-[13px] leading-5 text-[var(--text-dim)]">
           生成过程中可以随时停止，停止后会回到上一步，方便继续调整。
         </p>
       </header>

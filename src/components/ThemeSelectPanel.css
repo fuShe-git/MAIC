@@ -13,3 +13,69 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+.pw-theme-label {
+  margin: 0 0 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.pw-theme-page {
+  min-height: 132px;
+}
+
+.pw-theme-hint {
+  display: block;
+}
+
+/* 悬停浮框：限制在卡片内部，避免被滚动容器裁切 */
+.pw-theme-tooltip {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 40;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  padding: 12px;
+  color: var(--text);
+  box-shadow: 0 20px 50px -18px rgba(0, 0, 0, 0.65);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+}
+
+.pw-theme-hint:hover .pw-theme-tooltip,
+.pw-theme-hint:focus-within .pw-theme-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.pw-theme-tooltip-title {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pw-theme-tooltip-text {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: normal;
+}
+
+.pw-theme-tooltip-meta {
+  margin: 8px 0 0;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.6;
+}
