@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ChatResponse, ProgressStep } from '../api/chat'
+import { useI18n } from '../i18n/context'
 import './GeneratingView.css'
 
 /** 等待页的四态 + 重试态 + 用户主动中断态 */
@@ -95,6 +96,7 @@ export default function GeneratingView({
   onStart,
   onRetryFailed,
 }: GeneratingViewProps) {
+  const { t } = useI18n()
   const [elapsed, setElapsed] = useState(0)
 
   useEffect(() => {
@@ -169,11 +171,11 @@ export default function GeneratingView({
 
       <div className="gv-stage-head">
         <div className="gv-stage-steps" aria-label="生成流程步骤">
-          <span className="gv-stage-step is-done">大纲确认</span>
+          <span className="gv-stage-step is-done">{t('step.outline')}</span>
           <span className="gv-stage-line" />
-          <span className="gv-stage-step is-done">主题选择</span>
+          <span className="gv-stage-step is-done">{t('step.theme')}</span>
           <span className="gv-stage-line" />
-          <span className="gv-stage-step is-current">课件生成</span>
+          <span className="gv-stage-step is-current">{t('step.generate')}</span>
         </div>
         <div className="gv-stage-summary">
           <span title={courseTitle || topic}>{courseTitle || topic || '新的课程'}</span>

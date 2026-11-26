@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ThemeTemplate } from '../api/theme'
 import GeneratingMark from './GeneratingMark'
+import { useI18n } from '../i18n/context'
 import './ThemeSelectPanel.css'
 
 export type ThemePanelStatus = 'loading' | 'ready' | 'regenerating' | 'error'
@@ -29,6 +30,7 @@ export default function ThemeSelectPanel({
   onRegenerateTheme,
   onStart,
 }: ThemeSelectPanelProps) {
+  const { t } = useI18n()
   const [feedback, setFeedback] = useState('')
   const busy = status === 'loading' || status === 'regenerating'
   const canRegenerate = feedback.trim().length > 0 && !busy
@@ -36,15 +38,15 @@ export default function ThemeSelectPanel({
   return (
     <section className="pw-fade-in flex min-h-0 flex-1 flex-col gap-3">
       <header className="shrink-0">
-        <h2 className="m-0 text-[18px] font-semibold text-[var(--text)]">主题选择</h2>
-        <p className="mt-1 text-[13px] leading-5 text-[var(--text-dim)]">
-          这里选择的是课件视觉样式；同一份大纲可以搭配不同风格。
-        </p>
+        <p className="m-0 text-[13px] leading-5 text-[var(--text-dim)]">{t('themeSelect.desc')}</p>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1 pw-scroll">
         {busy && themes.length === 0 ? (
-          <GeneratingMark title="正在生成课件主题" subtitle="正在为你匹配合适的视觉风格…" />
+          <GeneratingMark
+            title={t('themeSelect.generatingTitle')}
+            subtitle={t('themeSelect.generatingSubtitle')}
+          />
         ) : (
           <div className="grid gap-3 md:grid-cols-3">
             {themes.map((theme, index) => {
@@ -62,7 +64,7 @@ export default function ThemeSelectPanel({
                 >
                   <div className="mb-3 flex items-center justify-between">
                     <span className="text-[12px] font-semibold text-[var(--text-dim)]">
-                      主题 {index + 1}
+                      {t('themeSelect.item', { n: index + 1 })}
                     </span>
                     {selected ? (
                       <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#5B45E0] text-[11px] text-white">
@@ -116,12 +118,12 @@ export default function ThemeSelectPanel({
       {!busy ? (
         <div className="shrink-0 rounded-2xl border border-[var(--border)] bg-[var(--surface-hover)] p-3">
           <label className="block text-[12px] font-medium text-[var(--text-dim)]">
-            修改意见
+            {t('themeSelect.feedback')}
             <input
               className="mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[13px] text-[var(--text)] outline-none transition focus:border-[#7259E8] focus:ring-2 focus:ring-[#7259E8]/20"
               value={feedback}
               maxLength={300}
-              placeholder="例如：第 2 个主题改成深蓝科技感，卡片更紧凑"
+              placeholder={t('themeSelect.feedbackPlaceholder')}
               onChange={(event) => setFeedback(event.target.value)}
             />
           </label>
@@ -133,12 +135,12 @@ export default function ThemeSelectPanel({
               onClick={() => onRegenerateTheme(feedback.trim())}
               disabled={!canRegenerate}
             >
-              重新生成主题
+              {t('themeSelect.regenerate')}
             </button>
             {/* 用外层 span 承载 title，保证按钮禁用时也能看到 hover 提示 */}
             <span
               className="inline-flex"
-              title={canStart ? '按当前大纲和所选样式生成课件' : startDisabledReason}
+              title={canStart ? t('prepare.readyToGenerate') : startDisabledReason}
             >
               <button
                 type="button"
@@ -146,7 +148,7 @@ export default function ThemeSelectPanel({
                 onClick={onStart}
                 disabled={!canStart}
               >
-                开始生成课件
+                {t('themeSelect.start')}
               </button>
             </span>
           </div>

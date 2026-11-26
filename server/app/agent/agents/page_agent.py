@@ -7,9 +7,11 @@
 
 import asyncio
 import logging
+from typing import Optional
 
 from app.agent.nodes import (
     _build_page,
+    _is_page_topic_relevant,
     _module_outline,
     _emit,
 )
@@ -48,9 +50,26 @@ async def page_agent(state: dict) -> dict:
     failures: list[dict] = []
     pages_done = 0
 
-    async def _build_one(module: dict) -> tuple[int, str]:
+    async def _build_one(module: dict) -> tuple[int, Optional[str]]:
         nonlocal pages_done
         ind = int(module.get("ind") or 0)
+
+        # 主题校验不通过（空内容/与课件主题无关）时不生成该页，也不记为生成失败
+        # 新增页面在主管阶段已校验过并缓存结果，避免重复调用模型
+        relevant = module.get("topicRelevant")
+        if not isinstance(relevant, bool):
+            relevant = await _is_page_topic_relevant(topic, module)
+        if not relevant:
+            logger.info("第 %s 页主题校验未通过，跳过生成", ind)
+            _emit(
+                "pages",
+                "skipped",
+                ind=ind,
+                message=f"第 {ind} 页 · 主题不相关或内容为空，已跳过",
+            )
+            pages_done += 1
+            _emit("pages", "progress", current=pages_done, total=total)
+            return ind, None
 
         def _on_error(exc: Exception) -> None:
             failures.append({"ind": ind, "stage": "pages", "error": str(exc)[:200]})
@@ -62,12 +81,15 @@ async def page_agent(state: dict) -> dict:
         return ind, page
 
     results = await asyncio.gather(*(_build_one(module) for module in todo))
-    new_pages = {ind: html for ind, html in results}
+    new_pages = {ind: html for ind, html in results if html is not None}
+    skipped_inds = {ind for ind, html in results if html is None}
 
     # 汇总成 [{ind, context: 本部分大纲, htmlpage: HTML}]，顺序与 catalog 一致
     page_list = []
     for module in catalog:
         ind = int(module.get("ind") or 0)
+        if ind in skipped_inds:
+            continue
         html = new_pages.get(ind) or (existing.get(ind) or {}).get("htmlpage") or ""
         page_list.append(
             {"ind": ind, "context": _module_outline(module), "htmlpage": html}

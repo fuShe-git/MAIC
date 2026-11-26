@@ -23,7 +23,12 @@ from langgraph.types import interrupt
 
 from app.agent.agent import get_llm
 from app.agent.agents import AGENT_REGISTRY
-from app.agent.nodes import DEFAULT_GREETING, _emit, _parse_json
+from app.agent.nodes import (
+    DEFAULT_GREETING,
+    _emit,
+    _ensure_new_module_content,
+    _parse_json,
+)
 from app.agent.state import CLEAR_MARKER
 
 logger = logging.getLogger(__name__)
@@ -203,6 +208,7 @@ def _count_updates(state: dict, dispatch: list[str], stage_of: dict) -> dict:
 async def supervisor_node(state: dict) -> dict:
     """校验状态 → （可能 interrupt 等待人工确认）→ 决策本轮派发的子 agent。"""
     updates: dict = _validate_state(state)
+    topic_text = (state.get("topic") or state.get("userIssue") or "").strip()
 
     # ── 人工确认分支：大纲产出后暂停，恢复执行时接受用户编辑的大纲 ──
     done = state.get("stageDone") or {}
@@ -235,7 +241,8 @@ async def supervisor_node(state: dict) -> dict:
         edited = answer.get("catalogList")
         updates.update(_cascade_clear())
         if isinstance(edited, list) and edited:
-            updates["catalogList"] = edited
+            enriched = await _ensure_new_module_content(topic_text, edited)
+            updates["catalogList"] = enriched or edited
         # 用户选定的 PPT 样式随确认一起恢复，后续 page_agent 会按它生成每页视觉。
         if isinstance(answer.get("theme"), dict) and answer.get("theme"):
             updates["selectedTheme"] = answer["theme"]
@@ -314,6 +321,12 @@ async def supervisor_node(state: dict) -> dict:
         # 重试次数用尽：标记失败清单继续组装（终态 partial + failedPages）
 
     # ── 常规推进：候选 = 确定性推导 ∩ 派发上限内 ───────────────────────────
+    # /chat/generate 直接带着用户大纲进入此分支，补写讲稿必须在 page/audio 并发派发前完成
+    catalog = updates.get("catalogList") or state.get("catalogList") or []
+    enriched = await _ensure_new_module_content(topic_text, catalog)
+    if enriched is not None:
+        updates["catalogList"] = enriched
+
     default_agents = _default_next(state)
     stage_of = {name: spec["stage"] for name, spec in AGENT_REGISTRY.items()}
     candidates = [

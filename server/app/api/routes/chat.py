@@ -31,6 +31,7 @@ from app.agent.nodes import (
     _build_page,
     _clean_script,
     _emit,
+    _is_page_topic_relevant,
     _module_outline,
     set_progress_emitter,
 )
@@ -625,6 +626,19 @@ async def _retry_failed_pages(
         )
         if module is None:
             still_failed.append({"ind": ind, "stage": "pages", "error": "大纲里没有这个模块"})
+            continue
+
+        # 与正常生成同一口径：主题不相关/内容为空时不重生成该页，也不补旁白
+        relevant = module.get("topicRelevant")
+        if not isinstance(relevant, bool):
+            relevant = await _is_page_topic_relevant(topic, module)
+        if not relevant:
+            logger.info("重试第 %s 页主题校验未通过，跳过生成", ind)
+            pages_by_ind.pop(ind, None)
+            audios_by_ind.pop(ind, None)
+            done_count += 1
+            _emit("retry", "skipped", ind=ind, message=f"第 {ind} 页 · 主题不相关或内容为空，已跳过")
+            _emit("retry", "progress", current=done_count, total=total, ind=ind)
             continue
 
         # 重生成页面

@@ -264,7 +264,12 @@ async def assemble_agent(state: dict) -> dict:
 
     topic = (state.get("topic") or state.get("userIssue") or "课件").strip()
     pages = list(state.get("pageList") or [])
-    audios = list(state.get("audioList") or [])
+    # 主题校验跳过的页不进 pageList，同步过滤其旁白，避免最终课件/资产库出现多余音频
+    page_inds = {int(page.get("ind") or 0) for page in pages if isinstance(page, dict)}
+    audios = [
+        item for item in (state.get("audioList") or [])
+        if isinstance(item, dict) and int(item.get("ind") or 0) in page_inds
+    ]
     quiz_list = list(state.get("quizList") or [])
     intent = str(state.get("intent") or "new_lecture")
     session_id = state.get("sessionId") or ""

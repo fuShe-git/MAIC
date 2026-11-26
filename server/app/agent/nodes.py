@@ -129,6 +129,31 @@ TOPIC_ROUTING_PROMPT = """你是 MAIC 的主题分类助手，负责判断一个
 属于：{"isSanguosha": true}
 不属于：{"isSanguosha": false}"""
 
+PAGE_TOPIC_CHECK_PROMPT = """你是 MAIC 的页面主题校验助手，负责判断一页课件是否值得生成。
+
+判定依据：整套课件主题、本页主题、本页简介与讲稿。
+判定规则：
+1. 本页主题为空，或只有「新增页面」「待补充」这类占位内容，且简介与讲稿也没有实质内容 → 不通过；
+2. 本页主题/讲稿与整套课件主题无关（换成别的话题，或只沾边却没有围绕本页主题讲解） → 不通过；
+3. 本页主题紧扣整套课件主题，哪怕是其中一个具体知识点 → 通过；
+4. 只判断主题是否相关、内容是否为空，不评判措辞、篇幅或资料是否充分。
+
+输出要求：只输出 JSON，不要解释文字，不要代码块围栏。
+通过：{"relevant": true}
+不通过：{"relevant": false, "reason": "一句话原因"}"""
+
+NEW_MODULE_NARRATION_PROMPT = """你是 MAIC 的课件讲稿撰写助手，负责给用户新增的一页主题补写口播讲解稿和页面简介。
+
+输入：整套课件主题、本页主题、用户填写的页面简介（可能为空）。
+要求：
+1. 讲解稿必须紧扣整套课件主题，围绕本页主题展开；用户填写的简介是要讲清的重点，必须自然融入，不要照搬原句；
+2. context 只给 1 条 90~160 字的中文口播稿，连贯口语讲述，不要 markdown 符号、括号注释、编号前缀、项目符号，不要提问式互动；
+3. summary 用 20~40 字说明本页要讲清什么，写在卡片简介里，不要照搬讲稿原句；
+4. 不要输出 HTML 或解释文字。
+
+输出要求：只输出 JSON，不要代码块围栏。
+示例：{"context": ["……"], "summary": "……"}"""
+
 QUERY_REWRITE_PROMPT = """你是 MAIC 的检索查询改写助手，负责把一个讲解主题改写成 3~5 个不同角度的检索查询，用来从知识库里召回更全面的资料。
 
 要求：
@@ -568,6 +593,128 @@ def _inject_fit(html: str) -> str:
     else:
         return html
     return html[:at] + _FIT_SCRIPT + "\n" + html[at:]
+
+
+async def _is_page_topic_relevant(topic: str, module: CatalogModule) -> bool:
+    """生成页面前用 LLM 校验本页主题：空内容或与整套课件主题无关时返回 False。
+
+    整堂课主题缺失时无从判断相关性，放行以免误杀全部页面；
+    LLM 调用失败、输出非法时一律按不通过处理，保证「主题没问题才生成」。
+    """
+    if not (topic or "").strip():
+        return True
+
+    titles = [
+        str(title).strip()
+        for title in (module.get("title") or [])
+        if str(title).strip()
+    ]
+    summary = str(module.get("summary") or "").strip()
+    points = _module_points(module).strip()
+    if not titles and not summary and not points:
+        return False
+
+    user_prompt = (
+        f"整套课件主题（判定基准）：{topic}\n"
+        f"本页主题：{'、'.join(titles) if titles else '（空）'}\n"
+        f"本页简介：{summary or '（空）'}\n"
+        f"本页讲稿：\n{points or '（空）'}"
+    )
+    try:
+        raw = await _invoke_text(PAGE_TOPIC_CHECK_PROMPT, user_prompt, temperature=0)
+        flag = _parse_json(raw).get("relevant")
+        if isinstance(flag, bool):
+            return flag
+        logger.warning(
+            "第 %s 页主题校验未返回布尔值，按不通过处理：%s", module["ind"], raw[:200]
+        )
+    except Exception as exc:
+        logger.warning("第 %s 页主题校验失败，按不通过处理：%s", module["ind"], exc)
+    return False
+
+
+async def _generate_new_module_text(
+    topic: str, titles: list[str], user_summary: str
+) -> tuple[str, str]:
+    """为新主题生成一条口播讲稿和简介；模型失败时用兜底文案保证该页仍有旁白。"""
+    course = (topic or "").strip() or "本次课程"
+    user_prompt = (
+        f"整套课件主题：{course}\n"
+        f"本页主题：{'、'.join(titles) if titles else '（空）'}\n"
+        f"用户填写的页面简介（必须融入）：{user_summary or '（未填写）'}"
+    )
+    script, summary = "", ""
+    try:
+        raw = await _invoke_text(NEW_MODULE_NARRATION_PROMPT, user_prompt, temperature=0.5)
+        data = _parse_json(raw)
+        script = _clean_script(" ".join(_as_str_list(data.get("context"))))[:400]
+        summary = str(data.get("summary") or "").strip()[:120]
+    except Exception as exc:
+        logger.warning("新增页面讲稿生成失败，使用兜底文案：%s", exc)
+
+    focus = "、".join(titles) if titles else "本页主题"
+    if not script:
+        hint = f"你特别提到要讲清楚：{user_summary}。" if user_summary else ""
+        script = (
+            f"接下来看{focus}。{hint}在「{course}」这套课里，{focus}是需要单独说清楚的一部分。"
+            f"我们先把它放回整体中，看看它解决什么问题，再一步步讲清它的要点和常见用法，"
+            "这样你就能把这一页和前后的内容接起来。"
+        )
+    if not summary:
+        summary = user_summary or f"围绕{'、'.join(titles) or topic}展开讲解，理解本页重点。"
+    return script, summary
+
+
+async def _ensure_new_module_content(topic: str, catalog: list) -> Optional[list]:
+    """确认页新增的页面若通过主题校验但没有讲稿，补写讲解稿与简介。
+
+    写回 catalog 后 page_agent / audio_agent 并发派发时都能看到同一份数据；
+    _narrationReady 与 topicRelevant 是内部标记，避免主管每轮重复调用模型。
+    无需处理时返回 None，避免无意义写回 state。
+    """
+    updated: list = []
+    changed = False
+    notified = False
+    for module in catalog or []:
+        if (
+            not isinstance(module, dict)
+            or not module.get("isNew")
+            or module.get("_narrationReady")
+        ):
+            updated.append(module)
+            continue
+
+        if any(str(item).strip() for item in (module.get("context") or [])):
+            next_module = dict(module)
+            next_module["_narrationReady"] = True
+            updated.append(next_module)
+            changed = True
+            continue
+
+        if not notified:
+            _emit("outline", "start", message="正在补充新增页面的讲解与简介…")
+            notified = True
+
+        next_module = dict(module)
+        relevant = module.get("topicRelevant")
+        if not isinstance(relevant, bool):
+            relevant = await _is_page_topic_relevant(topic, module)
+        next_module["topicRelevant"] = relevant
+        if relevant:
+            titles = [
+                str(title).strip()
+                for title in (module.get("title") or [])
+                if str(title).strip()
+            ]
+            user_summary = str(module.get("summary") or "").strip()
+            script, summary = await _generate_new_module_text(topic, titles, user_summary)
+            next_module["context"] = [script]
+            next_module["summary"] = summary
+        next_module["_narrationReady"] = True
+        updated.append(next_module)
+        changed = True
+
+    return updated if changed else None
 
 
 async def _build_page(

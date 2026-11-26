@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { OutlineModule } from '../api/chat'
 import GeneratingMark from './GeneratingMark'
+import { useI18n } from '../i18n/context'
 import './ConfirmView.css'
 
 export type { OutlineModule }
@@ -46,8 +47,9 @@ export default function ConfirmView({
   status,
   errorMessage,
   onDraftChange,
-  onRegenerateOutline,
+  // onRegenerateOutline, // 重新生成大纲按钮已暂时注释，接口保留备用
 }: OutlinePanelProps) {
+  const { t } = useI18n()
   const [modules, setModules] = useState<OutlineModule[]>(() => cloneModules(catalogList))
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
@@ -61,12 +63,12 @@ export default function ConfirmView({
   }, [modules, onDraftChange])
 
   const busy = status === 'loading' || status === 'regenerating'
-  // 只有用户新增的页面可删除；新增页面主题都填写了内容才允许重新生成
-  const addedModules = modules.filter((module) => module.isNew)
-  const canRegenerate =
-    !busy &&
-    addedModules.length > 0 &&
-    addedModules.every((module) => (module.title[0] ?? '').trim().length > 0)
+  // 重新生成大纲按钮暂时注释，以下可用性判断一并保留备用
+  // const addedModules = modules.filter((module) => module.isNew)
+  // const canRegenerate =
+  //   !busy &&
+  //   addedModules.length > 0 &&
+  //   addedModules.every((module) => (module.title[0] ?? '').trim().length > 0)
 
   const updateModule = (index: number, patch: Partial<OutlineModule>) => {
     setModules((prev) => prev.map((module, i) => (i === index ? { ...module, ...patch } : module)))
@@ -117,15 +119,15 @@ export default function ConfirmView({
   return (
     <section className="pw-fade-in flex min-h-0 flex-1 flex-col gap-3">
       <header className="shrink-0">
-        <h2 className="m-0 text-[18px] font-semibold text-[var(--text)]">大纲确认</h2>
-        <p className="mt-1 text-[13px] leading-5 text-[var(--text-dim)]">
-          每个页面的主题与简介都可以直接修改，拖动左侧手柄可调整页面顺序；新增的页面可以删除。
-        </p>
+        <p className="m-0 text-[13px] leading-5 text-[var(--text-dim)]">{t('confirm.desc')}</p>
       </header>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 pw-scroll">
         {busy && modules.length === 0 ? (
-          <GeneratingMark title="正在生成课程大纲" subtitle="正在理解你的需求…" />
+          <GeneratingMark
+            title={t('confirm.generatingTitle')}
+            subtitle={t('confirm.generatingSubtitle')}
+          />
         ) : (
           modules.map((module, moduleIndex) => (
             <article
@@ -163,8 +165,8 @@ export default function ConfirmView({
                   }}
                   onDragEnd={finishDrag}
                   className="pw-drag-handle"
-                  title="拖动调整页面顺序"
-                  aria-label="拖动调整页面顺序"
+                  title={t('confirm.dragHint')}
+                  aria-label={t('confirm.dragHint')}
                 >
                   <svg viewBox="0 0 16 16" aria-hidden="true">
                     <circle cx="5" cy="3" r="1.25" />
@@ -175,12 +177,12 @@ export default function ConfirmView({
                     <circle cx="11" cy="13" r="1.25" />
                   </svg>
                 </span>
-                <span className="pw-page-index">第 {moduleIndex + 1} 页</span>
+                <span className="pw-page-index">{t('confirm.pageIndex', { n: moduleIndex + 1 })}</span>
                 {module.isNew ? (
                   <button
                     type="button"
-                    title="删除新增页面"
-                    aria-label="删除新增页面"
+                    title={t('confirm.deleteAdded')}
+                    aria-label={t('confirm.deleteAdded')}
                     disabled={busy}
                     onClick={() => removeModule(moduleIndex)}
                     className="ml-auto flex h-6 w-6 cursor-pointer items-center justify-center rounded-lg border border-transparent text-[16px] leading-none text-[var(--text-dim)] transition hover:border-[#F0C4C0] hover:bg-[#FDECEC] hover:text-[#B3261E] disabled:cursor-not-allowed disabled:opacity-50"
@@ -191,22 +193,22 @@ export default function ConfirmView({
               </div>
 
               <label className="mb-2 block text-[12px] font-medium text-[var(--text-dim)]">
-                页面主题
+                {t('confirm.pageTopic')}
                 <input
                   className="pw-input mt-1 w-full rounded-xl border bg-[var(--bg)] px-3 py-2 text-[14px] text-[var(--text)] outline-none transition"
                   value={module.title[0] ?? ''}
-                  placeholder="例如：什么是普朗克常量"
+                  placeholder={t('confirm.pageTopicPlaceholder')}
                   disabled={busy}
                   onChange={(event) => updateTitle(moduleIndex, event.target.value)}
                 />
               </label>
 
               <label className="block text-[12px] font-medium text-[var(--text-dim)]">
-                页面简介
+                {t('confirm.pageSummary')}
                 <textarea
                   className="pw-input mt-1 w-full resize-y rounded-xl border bg-[var(--bg)] px-3 py-2 text-[13px] leading-6 text-[var(--text)] outline-none transition"
                   value={module.summary ?? ''}
-                  placeholder="例如：先认识普朗克常量是什么，再交待它想要解决的整体问题"
+                  placeholder={t('confirm.pageSummaryPlaceholder')}
                   rows={2}
                   disabled={busy}
                   onChange={(event) => updateModule(moduleIndex, { summary: event.target.value })}
@@ -231,8 +233,9 @@ export default function ConfirmView({
               className="cursor-pointer rounded-xl border border-[var(--border-strong)] bg-[var(--surface-2)] px-3 py-2 text-[13px] font-medium text-[var(--text)] transition hover:border-[#7259E8] hover:text-[#5B45E0]"
               onClick={addModule}
             >
-              + 新建大纲
+              {t('confirm.addCustom')}
             </button>
+            {/* 重新生成大纲按钮暂时注释，保留代码备用
             <button
               type="button"
               className="cursor-pointer rounded-xl border border-[#DAD4FF] bg-[#F5F2FF] px-3 py-2 text-[13px] font-medium text-[#5B45E0] transition hover:bg-[#EBE5FF] disabled:cursor-not-allowed disabled:opacity-50"
@@ -241,6 +244,7 @@ export default function ConfirmView({
             >
               重新生成大纲
             </button>
+            */}
           </div>
         </div>
       ) : null}

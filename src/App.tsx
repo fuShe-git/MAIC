@@ -445,7 +445,7 @@ function App() {
       })
   }
 
-  /** 发起/重新发起 PPT 样式生成，失败时用内置模板兜底但不开放开始按钮 */
+  /** 发起/重新发起 PPT 样式生成；降级为内置模板时按正常流程继续，不阻断课件生成 */
   function runThemeRequest(payload: { message: string; feedback?: string; currentThemes?: ThemeTemplate[] }, mode: 'loading' | 'regenerating') {
     cancelThemeTask()
     const controller = new AbortController()
@@ -453,28 +453,22 @@ function App() {
     setThemeStatus(mode)
     setThemeError('')
 
+    // 模型失败或解析不完整时，内置模板与正常结果走同一套选中逻辑
+    const applyThemes = (list: ThemeTemplate[]) => {
+      setThemes(list)
+      setThemeStatus('ready')
+      setThemeError('')
+      setSelectedThemeId((prev) => (prev && list.some((item) => item.id === prev) ? prev : (list[0]?.id ?? '')))
+    }
+
     generateThemes({ ...payload, modelId }, controller.signal)
       .then((response) => {
         if (controller.signal.aborted) return
-        const list = response.themes?.length ? response.themes : FALLBACK_THEMES
-        setThemes(list)
-        if (response.degraded || list === FALLBACK_THEMES) {
-          setThemeStatus('error')
-          setThemeError('样式生成失败，已展示内置模板；输入意见后可重试')
-          setSelectedThemeId('')
-          return
-        }
-        setThemeStatus('ready')
-        setSelectedThemeId((prev) => (prev && list.some((item) => item.id === prev) ? prev : (list[0]?.id ?? '')))
+        applyThemes(response.themes?.length ? response.themes : FALLBACK_THEMES)
       })
-      .catch((err: unknown) => {
+      .catch(() => {
         if (controller.signal.aborted) return
-        setThemes(FALLBACK_THEMES)
-        setThemeStatus('error')
-        setThemeError(
-          `样式生成失败，已展示内置模板；输入意见后可重试（${err instanceof Error ? err.message : '网络异常'}）`,
-        )
-        setSelectedThemeId('')
+        applyThemes(FALLBACK_THEMES)
       })
       .finally(() => {
         if (themeAbortRef.current === controller) themeAbortRef.current = null

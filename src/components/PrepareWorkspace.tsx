@@ -6,6 +6,7 @@ import type { OutlineEditPayload } from './ConfirmView'
 import ThemeSelectPanel from './ThemeSelectPanel'
 import GeneratePanel from './GeneratePanel'
 import type { WaitStatus } from './GeneratingView'
+import { useI18n } from '../i18n/context'
 import './PrepareWorkspace.css'
 
 export type OutlinePanelStatus = 'loading' | 'ready' | 'regenerating' | 'error'
@@ -58,15 +59,11 @@ interface PrepareWorkspaceProps {
   onRetryGeneration: () => void
 }
 
-const STEPS: Array<{
-  key: PrepareStep
-  label: string
-  hint: string
-}> = [
-  { key: 'outline', label: '大纲确认', hint: '规划课程结构' },
-  { key: 'theme', label: '主题选择', hint: '选定课件样式' },
-  { key: 'generate', label: '课件生成', hint: '进入课堂' },
-]
+const STEPS = [
+  { key: 'outline', labelKey: 'step.outline', hintKey: 'step.outlineHint' },
+  { key: 'theme', labelKey: 'step.theme', hintKey: 'step.themeHint' },
+  { key: 'generate', labelKey: 'step.generate', hintKey: 'composer.enter' },
+] as const
 
 /** 准备工作台：三段式导航中的前两段，大纲与样式各自独立加载、调试。 */
 export default function PrepareWorkspace({
@@ -96,6 +93,8 @@ export default function PrepareWorkspace({
   onRetryFailed,
   onRetryGeneration,
 }: PrepareWorkspaceProps) {
+  const { t } = useI18n()
+
   /** 切到主题选择时同步提交当前大纲（替代原“下一步”按钮） */
   const switchStep = (step: 'outline' | 'theme') => {
     if (step === 'theme') onOutlineConfirmed(outlineDraft)
@@ -110,15 +109,19 @@ export default function PrepareWorkspace({
   const themeReady = themeStatus === 'ready' && themes.length > 0 && Boolean(selectedThemeId)
   const canStart = outlineReady && themeReady
   const startDisabledReason = !outlineReady && !themeReady
-    ? '大纲和主题暂未就绪'
+    ? t('prepare.waitingOutline')
     : !outlineReady
-      ? '大纲暂未就绪'
+      ? t('prepare.waitingOutlineOnly')
       : !themeReady
-        ? '主题暂未就绪'
-        : '按当前大纲和所选样式生成课件'
+        ? t('prepare.waitingThemeOnly')
+        : t('prepare.readyToGenerate')
 
   const statusLabel = (status: OutlinePanelStatus | ThemePanelStatus) =>
-    status === 'ready' ? '已生成' : status === 'error' ? '需重试' : '生成中'
+    status === 'ready'
+      ? t('prepare.statusReady')
+      : status === 'error'
+        ? t('prepare.statusRetry')
+        : t('prepare.statusGenerating')
 
   return (
     <div className="pw-workspace flex h-svh flex-col overflow-hidden bg-[var(--page-bg)] text-[var(--text)]">
@@ -129,18 +132,18 @@ export default function PrepareWorkspace({
             onClick={onBack}
             className="cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-[13px] text-[var(--text-dim)] transition hover:text-[var(--text)]"
           >
-            ← 返回
+            {t('prepare.back')}
           </button>
           <div className="min-w-0 flex-1 text-center">
-            <p className="m-0 text-[11px] tracking-[0.24em] text-[var(--text-faint)]">MAIC · 课堂生成</p>
-            <h1 className="m-0 truncate text-[16px] font-semibold">{courseTitle || '新的课程'}</h1>
+            <p className="m-0 text-[11px] tracking-[0.24em] text-[var(--text-faint)]">{t('prepare.brand')}</p>
+            <h1 className="m-0 truncate text-[16px] font-semibold">{courseTitle || t('prepare.newCourse')}</h1>
           </div>
           <div className="hidden w-[84px] md:block" />
         </div>
       </header>
 
       <main className="mx-auto flex min-h-0 w-full max-w-[1240px] flex-1 flex-col gap-3 overflow-hidden px-4 py-5">
-        <nav className="pw-steps flex shrink-0 items-stretch rounded-2xl border border-[var(--border)] bg-[var(--surface-2)]" aria-label="准备流程">
+        <nav className="pw-steps flex shrink-0 items-stretch rounded-2xl border border-[var(--border)] bg-[var(--surface-2)]" aria-label={t('prepare.flowAria')}>
           {STEPS.map((step, index) => {
             const active = activeStep === step.key
             const third = step.key === 'generate'
@@ -170,9 +173,9 @@ export default function PrepareWorkspace({
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className={`block truncate text-[13px] font-semibold ${active ? 'text-[var(--accent)]' : 'text-[var(--text)]'}`}>
-                      {step.label}
+                      {t(step.labelKey)}
                     </span>
-                    <span className="block truncate text-[11px] text-[var(--text-faint)]">{step.hint}</span>
+                    <span className="block truncate text-[11px] text-[var(--text-faint)]">{t(step.hintKey)}</span>
                   </span>
                   {status ? (
                     <span
