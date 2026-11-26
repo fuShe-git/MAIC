@@ -147,17 +147,17 @@ NEW_MODULE_NARRATION_PROMPT = """你是 MAIC 的课件讲稿撰写助手，负�
 输入：整套课件主题、本页主题、用户填写的页面简介（可能为空）。
 要求：
 1. 讲解稿必须紧扣整套课件主题，围绕本页主题展开；用户填写的简介是要讲清的重点，必须自然融入，不要照搬原句；
-2. context 只给 1 条 90~160 字的中文口播稿，连贯口语讲述，不要 markdown 符号、括号注释、编号前缀、项目符号，不要提问式互动；
-3. summary 用 20~40 字说明本页要讲清什么，写在卡片简介里，不要照搬讲稿原句；
+2. context 只给 1 条 130~200 字的中文口播稿，连贯口语讲述，说清是什么、为什么、怎么做，并用一个小例子或常见误区收尾，不要 markdown 符号、括号注释、编号前缀、项目符号，不要提问式互动；
+3. summary 用 25~45 字说明本页要讲清什么、从什么角度讲，写在卡片简介里，不要照搬讲稿原句；
 4. 不要输出 HTML 或解释文字。
 
 输出要求：只输出 JSON，不要代码块围栏。
 示例：{"context": ["……"], "summary": "……"}"""
 
-QUERY_REWRITE_PROMPT = """你是 MAIC 的检索查询改写助手，负责把一个讲解主题改写成 3~5 个不同角度的检索查询，用来从知识库里召回更全面的资料。
+QUERY_REWRITE_PROMPT = """你是 MAIC 的检索查询改写助手，负责把一个讲解主题改写成 5~6 个不同角度的检索查询，用来从知识库里召回更全面的资料。
 
 要求：
-1. 角度包括但不限于：定义与概念、规则与流程、分类与举例、技巧与策略、常见误区；
+1. 角度包括但不限于：定义与概念、规则与流程、分类与举例、具体数值与例外、技巧与策略、常见误区；
 2. 每个查询是一句简短的检索词（10~20 字），彼此不重复；
 3. 只围绕主题本身，不要引入无关话题。
 
@@ -195,27 +195,38 @@ SAFETY_PROMPT = """你是 MAIC 的内容安全审核助手，负责判断一段�
 违规：{"safe": false, "reason": "一句话原因"}
 安全：{"safe": true, "reason": ""}"""
 
-OUTLINE_PROMPT = """你是 MAIC（多智能体互动课堂）的课件策划，负责把一个主题拆成「由浅入深」的讲解大纲，并写出可以直接念出来的口播讲稿。
+OUTLINE_PLAN_PROMPT = """你是 MAIC（多智能体互动课堂）的课件策划，负责把一个主题拆成「由浅入深」的讲解大纲骨架。
 
 要求：
 1. 必须紧扣用户给出的讲解主题：整套课件标题和每个模块都服务这个主题本身，不能擅自缩窄成某个子玩法、具体条件或换成别的主题；若主题是某款游戏的玩法，第 1 个模块必须是该游戏玩法的整体入门，不能直接跳到某个具体规则；
-2. 拆成 3~5 个模块，模块之间严格由浅入深：先讲「是什么、怎么玩」，再讲细节与技巧，最后讲进阶策略或常见误区；
-3. 每个模块含 1~3 个知识点：title 是知识点标题（简短名词短语，8 字以内）；
-4. 每个模块还要有 summary，用 20~40 字说明本页要讲清楚什么，写在卡片简介里，不要照搬讲稿原句；
-5. context 是讲解这个知识点的口播讲稿（90~160 字），必须是连贯的一句话接一句话的口语讲述，不是要点罗列：
-   - 开头一句话承接：第 1 个知识点先引入本页话题，之后每个知识点都先接住上一个（例如「座次搞清楚了，再来看入席时的顺序」），不要从半空中重新起头；
-   - 中间把要点讲清楚，允许在收尾前补一句适度延伸，用一个小例子、一个类比或一个常见误区帮助理解，点到为止，不要展开成段；
-   - 最后一句自然收束，让人能顺着往下听；
-   - 每个模块的第 1 条 context 要用一句话接住上一个模块，第 1 个模块负责整堂课的引入；
-   - 全部模块合计最多出现一次「注意这里」这类口头提醒；不要出现任何提问式互动（例如「你有没有想过」「大家想一想」）；
-   - 只用口语和中文标点：不要 markdown 符号、不要括号注释、不要编号前缀、不要项目符号；
-6. title 与 context 必须等长且一一对应（第 i 个 context 讲的就是第 i 个 title）；
-7. ind 从 1 开始连续编号；
-8. 资料只作为事实依据，不要原文照抄；资料与主题无关时忽略它，用你自己的知识。
+2. 模块数量必须给够 8~10 个（对应 8~10 页），少于 8 个视为不合格：宁可把一个大知识点拆成两页讲透，也不要把几页的内容挤成一页；
+3. 模块之间严格由浅入深，形成一条完整课程线：前 1~2 页讲「是什么、整体怎么玩」，中间逐页拆规则细节与操作技巧，最后 1~2 页讲进阶策略、常见误区与全局总结；相邻模块不能重复讲同一件事；
+4. 每个模块给 2~3 个知识点标题（title），是简短名词短语，8 字以内，彼此不重复，合起来刚好覆盖本页要讲的内容；
+5. 每个模块还要有 summary，用 25~45 字说明本页要讲清什么、从什么角度讲，写在卡片简介里；不能只是标题的复述；
+6. ind 从 1 开始连续编号；
+7. 资料只作为事实依据，不要原文照抄；资料里提到的数值、阶段、例外情况要尽量安排进对应模块；资料与主题无关时忽略它，用你自己的知识。
 
-输出要求：只输出 JSON，不要解释文字，不要代码块围栏，不要输出 HTML。
-示例：
-{"catalogList": [{"ind": 1, "summary": "先认识游戏的身份构成与胜负目标", "title": ["什么是三国杀", "身份与胜负"], "context": ["咱们先从最基础的开始。三国杀是一款以三国为背景的桌面卡牌游戏，玩家各挑一名武将，用手里的卡牌互相攻击、防御和辅助，把这一层想通，后面的规则才好落地。", "明白玩法了，再看输赢怎么算。每名玩家开局都藏着一个身份，主公和忠臣要清掉反贼和内奸，反贼则要击杀主公。注意这里，内奸得先帮着主公清场，最后再单独取胜，这是新手最容易搞混的地方。"]}, {"ind": 2, "summary": "按判定、摸牌、出牌、弃牌四阶段理解一个回合", "title": ["回合流程"], "context": ["身份和胜负心里有数了，我们接着看一个回合怎么走。一个回合依次走判定、摸牌、出牌、弃牌四个阶段，摸牌阶段固定摸两张，出牌阶段可以按手里的牌自由使用。记住这个顺序，你就能判断什么时候该攒牌、什么时候该出手。"]}]}"""
+输出要求：只输出 JSON，不要解释文字，不要代码块围栏，不要输出 HTML，不要输出 context（讲稿由后续步骤单独撰写）。
+示例（只演示字段格式，实际模块数必须达到 8~10 个）：
+{"catalogList": [{"ind": 1, "summary": "先认识游戏的身份构成与胜负目标", "title": ["什么是三国杀", "身份与胜负"]}, {"ind": 2, "summary": "按判定、摸牌、出牌、弃牌四个阶段理解一个回合怎么走", "title": ["回合流程", "阶段要点"]}]}"""
+
+MODULE_SCRIPT_PROMPT = """你是 MAIC 的课件讲稿撰写助手，负责为讲解大纲里的一页写可以直接念出来的口播讲稿。
+
+输入：整套课件主题、本页简介、本页知识点标题（按顺序）、前后页的标题。
+要求：
+1. 必须逐字围绕整套课件主题展开，不要缩窄成别的子话题；
+2. 为每个知识点各写一条 context，条数与知识点条数完全一致、顺序一一对应，每条 130~200 字；
+3. 每条 context 都要讲透一层，不能只罗列结论：
+   - 开头一句话承接：本页第 1 条要接住上一页（第 1 页则负责整堂课的引入），之后每条都先接住上一条，不要从半空中重新起头；
+   - 中间说清这个知识点是什么、为什么会这样、具体怎么做；
+   - 收尾给一个小例子、一个类比或一个常见误区，帮助听众真正听懂，点到为止；
+   - 最后一句自然收束，让人能顺着往下听；
+4. 相邻两条不要重复同一个信息点，也不要提前把下一页的内容讲掉；
+5. 只用口语和中文标点：不要 markdown 符号、不要括号注释、不要编号前缀、不要项目符号；不要出现任何提问式互动（例如「你有没有想过」「大家想一想」）；本页最多出现一次「注意这里」这类口头提醒；
+6. 不要输出 HTML 或解释文字。
+
+输出要求：只输出 JSON，不要代码块围栏。
+示例：{"context": ["……", "……"]}"""
 
 DEFAULT_VISUAL_STYLE = """视觉规范（必须遵守，整体是暖色简约风）：
 1. 画布：宽度 100%，最大 1040px，aspect-ratio 16 / 9，背景 #FEFAF3，内边距 44px 56px，圆角 12px，
@@ -247,11 +258,14 @@ PAGE_PROMPT_TEMPLATE = """你是 MAIC 的课件前端，负责把一页口播讲
 
 PAGE_PROMPT = PAGE_PROMPT_TEMPLATE.format(visual_style=DEFAULT_VISUAL_STYLE)
 
-# RAG 召回的条数
-RAG_TOP_K = 6
+# RAG 召回的条数：页数变多后每页都要有事实依据，召回量同步放大
+RAG_TOP_K = 10
 
 # 页面卡片正文的字数上限：讲稿篇幅远大于页面，兜底渲染时按这个长度压缩，避免溢出
 PAGE_CARD_MAX_CHARS = 26
+
+# 单页知识点条数上限：页面右栏最多放 3 个信息条，讲稿再多也只对应 3 条版式
+MAX_POINTS_PER_PAGE = 3
 
 # 兜底页面与片段包装共用的样式，保证降级时也是同一套简约风格
 PAGE_BASE_STYLE = """
@@ -410,7 +424,7 @@ def _normalize_catalog(data: dict) -> list[CatalogModule]:
     for item in data.get("catalogList") or []:
         if not isinstance(item, dict):
             continue
-        titles = _as_str_list(item.get("title"))
+        titles = _as_str_list(item.get("title"))[:MAX_POINTS_PER_PAGE]
         scripts = (_clean_script(content) for content in _as_str_list(item.get("context")))
         contexts = [script for script in scripts if script]
         count = min(len(titles), len(contexts))  # 以短的一侧为准，保证一一对应
@@ -428,6 +442,38 @@ def _normalize_catalog(data: dict) -> list[CatalogModule]:
             }
         )
     return catalog
+
+
+def _normalize_plan(data: dict) -> list[CatalogModule]:
+    """校验模型给出的大纲骨架：只取 title 与 summary，context 留空等下一步按页补写。"""
+    plan: list[CatalogModule] = []
+    for item in data.get("catalogList") or []:
+        if not isinstance(item, dict):
+            continue
+        titles = _as_str_list(item.get("title"))[:MAX_POINTS_PER_PAGE]
+        if not titles:
+            continue
+        summary = str(item.get("summary") or "").strip()[:120]
+        if not summary:
+            summary = f"围绕{'、'.join(titles)}展开讲解，循序渐进理解本页重点。"
+        plan.append(
+            {
+                "ind": len(plan) + 1,
+                "title": titles,
+                "context": [],
+                "summary": summary,
+            }
+        )
+    return plan
+
+
+def _fallback_script(topic: str, title: str, summary: str) -> str:
+    """讲稿生成失败时的兜底口播：用本页简介拼一句能直接朗读的话，保证不空音。"""
+    focus = summary.strip().rstrip("。") or f"{title}是这一页要讲清楚的重点"
+    return (
+        f"接下来讲{title}。{focus}。把它放回「{topic}」这套课里，"
+        "先弄清它要解决什么问题，再看具体怎么做，这一页就能听明白了。"
+    )
 
 
 def _module_points(module: CatalogModule) -> str:
@@ -483,8 +529,80 @@ async def _is_sanguosha_topic(topic: str) -> bool:
     return "三国杀" in topic
 
 
+async def _write_module_scripts(
+    topic: str, plan: list[CatalogModule], index: int
+) -> list[str]:
+    """给一页的所有知识点补写口播讲稿，返回与 title 顺序一致的讲稿列表（可能少给，由调用方兜底）。"""
+    module = plan[index]
+    total = len(plan)
+
+    if index == 0:
+        prev_hint = "本模块是第 1 页，第 1 条讲稿负责整堂课的引入。"
+    else:
+        prev = plan[index - 1]
+        prev_hint = (
+            f"上一页（第 {prev['ind']} 页）讲的是：{'、'.join(prev['title'])}；"
+            "本页第 1 条讲稿要用一句话接住它。"
+        )
+    next_hint = ""
+    if index + 1 < total:
+        nxt = plan[index + 1]
+        next_hint = (
+            f"\n下一页（第 {nxt['ind']} 页）会讲：{'、'.join(nxt['title'])}；本页不要提前讲掉。"
+        )
+
+    points = "\n".join(
+        f"{pos}. {title}" for pos, title in enumerate(module["title"], 1)
+    )
+    user_prompt = (
+        f"整套课件主题（必须逐字围绕）：{topic}\n"
+        f"本模块是第 {module['ind']} 页，共 {total} 页。\n"
+        f"本页简介：{module['summary']}\n"
+        f"本页知识点（按顺序逐条写讲稿）：\n{points}\n"
+        f"{prev_hint}{next_hint}\n\n"
+        "请为上面每一个知识点各写一条口播讲稿。"
+    )
+    raw = await _invoke_text(MODULE_SCRIPT_PROMPT, user_prompt, temperature=0.5)
+    scripts = [_clean_script(text) for text in _as_str_list(_parse_json(raw).get("context"))]
+    return [script for script in scripts if script]
+
+
+async def _fill_scripts(topic: str, plan: list[CatalogModule]) -> list[CatalogModule]:
+    """按页并发补写讲稿：单页失败只影响这一页（用简介兜底），不影响整份大纲。"""
+    results = await asyncio.gather(
+        *(_write_module_scripts(topic, plan, index) for index in range(len(plan))),
+        return_exceptions=True,
+    )
+
+    catalog: list[CatalogModule] = []
+    for module, result in zip(plan, results):
+        if isinstance(result, BaseException):
+            logger.warning("第 %s 页讲稿生成失败，使用兜底文案：%s", module["ind"], result)
+            result = []
+        scripts = list(result or [])
+        contexts = [
+            scripts[pos] if pos < len(scripts) and scripts[pos]
+            else _fallback_script(topic, title, module["summary"])
+            for pos, title in enumerate(module["title"])
+        ]
+        catalog.append(
+            {
+                "ind": module["ind"],
+                "title": list(module["title"]),
+                "context": contexts,
+                "summary": module["summary"],
+            }
+        )
+    return catalog
+
+
 async def _build_catalog(topic: str, docs: list[str], hint: str = "") -> list[CatalogModule]:
-    """结合模型自身知识与 RAG 资料，按由浅入深的顺序生成大纲。"""
+    """结合模型自身知识与 RAG 资料，按由浅入深的顺序生成大纲。
+
+    分两步走：先规划模块骨架（页数、每页标题与简介），再按页并发补写口播讲稿。
+    一次性吐出 8~10 页的完整讲稿容易超出单次输出上限被截断，骨架被截断会导致
+    整份 JSON 解析失败、退化成单页课件；拆开之后页数再多也不会因为长度崩掉。
+    """
     if docs:
         material = "\n\n".join(f"[资料{i}] {doc}" for i, doc in enumerate(docs, 1))
     else:
@@ -497,12 +615,14 @@ async def _build_catalog(topic: str, docs: list[str], hint: str = "") -> list[Ca
         f"可参考的资料：\n{material}"
         f"{extra}"
     )
-    raw = await _invoke_text(OUTLINE_PROMPT, user_prompt, temperature=0.4)
-    catalog = _normalize_catalog(_parse_json(raw))
+    raw = await _invoke_text(OUTLINE_PLAN_PROMPT, user_prompt, temperature=0.4)
+    plan = _normalize_plan(_parse_json(raw))
+    if plan and len(plan) < 6:  # 页数明显没给够时留痕，便于排查模型偷懒
+        logger.warning("大纲只规划出 %s 页，少于预期的 8~10 页：%s", len(plan), raw[:200])
 
-    if not catalog:  # 模型没吐出合法 JSON 时降级成单模块，避免整条链路断掉
+    if not plan:  # 模型没吐出合法 JSON 时降级成单模块，避免整条链路断掉
         logger.warning("大纲解析失败，降级为单模块：%s", raw)
-        catalog = [
+        return [
             {
                 "ind": 1,
                 "title": [topic],
@@ -510,7 +630,8 @@ async def _build_catalog(topic: str, docs: list[str], hint: str = "") -> list[Ca
                 "summary": f"从核心概念出发，理解「{topic}」的基础流程与常见要点。",
             }
         ]
-    return catalog
+
+    return await _fill_scripts(topic, plan)
 
 
 def _finish_html(fragment: str, theme: Optional[dict] = None) -> str:

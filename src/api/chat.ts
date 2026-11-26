@@ -233,3 +233,11 @@ export function retryFailedPages(
     signal,
   })
 }
+
+/** 把框架英文异常转成中文提示，避免把 LangGraph 报错原文直接展示给用户 */
+export function friendlyErrorMessage(message: string): string {
+  if (/recursion limit of \d+ reached|GRAPH_RECURSION_LIMIT/i.test(message)) {
+    return '生成出错，请重试；若仍失败，请联系管理员。'
+  }
+  return message
+}

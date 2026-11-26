@@ -94,7 +94,7 @@ async def run_classroom(
     - topic / outline_hint：重生成大纲时的真实主题与用户补充要求，避免把整段指令当成主题。
     """
     tid = (thread_id or "").strip() or uuid4().hex
-    config = {"configurable": {"thread_id": tid}}
+    config = {"configurable": {"thread_id": tid}, "recursion_limit": 30}
     initial: SimpleState = {
         "userIssue": user_issue,
         "needLecture": True,
@@ -141,7 +141,7 @@ async def start_classroom(
     意图/查询/检索/大纲四个已经由用户完成的阶段。
     """
     tid = uuid4().hex
-    config = {"configurable": {"thread_id": tid}}
+    config = {"configurable": {"thread_id": tid}, "recursion_limit": 30}
     initial: SimpleState = {
         "userIssue": topic,
         "needLecture": True,
@@ -174,5 +174,5 @@ async def start_classroom(
 
 async def resume_classroom(thread_id: str, answer: dict) -> dict:
     """人工确认后恢复执行：answer = {confirmed, catalogList}。"""
-    config = {"configurable": {"thread_id": (thread_id or "").strip()}}
+    config = {"configurable": {"thread_id": (thread_id or "").strip()}, "recursion_limit": 30}
     return await classroom_graph.ainvoke(Command(resume=answer), config=config)

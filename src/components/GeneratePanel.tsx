@@ -1,3 +1,4 @@
+import { friendlyErrorMessage } from '../api/chat'
 import type { ChatResponse, ProgressStep } from '../api/chat'
 import type { WaitStatus } from './GeneratingView'
 
@@ -70,13 +71,14 @@ export default function GeneratePanel({
   const failedPages = lecture?.failedPages ?? []
   const partial = Boolean(lecture?.partial) || failedPages.length > 0
 
+  const displayMessage = friendlyErrorMessage(message)
   const title = ready ? '课件已生成' : failed ? '生成失败' : '正在生成课件'
   const subtitle = ready
     ? partial
       ? '课件已就绪，但有部分内容降级交付'
       : '课件已就绪，可以进入课堂了'
     : failed
-      ? message || '生成过程中出了点问题，可返回上一步调整后重新开始'
+      ? displayMessage || '生成过程中出了点问题，可返回上一步调整后重新开始'
       : '正在按大纲与所选样式生成页面与讲解音频'
 
   return (
@@ -109,6 +111,16 @@ export default function GeneratePanel({
 
           <h3 className="mt-3 text-[16px] font-semibold text-[var(--text)]">{title}</h3>
           <p className="mt-1 text-[12px] text-[var(--text-faint)]">{subtitle}</p>
+
+          {failed && onRetry ? (
+            <button
+              type="button"
+              className="mt-4 cursor-pointer rounded-xl bg-gradient-to-r from-[#5B45E0] to-[#8B7BFF] px-4 py-2 text-[13px] font-semibold text-white shadow-[0_10px_24px_-12px_rgba(91,69,224,0.9)] transition hover:brightness-110"
+              onClick={onRetry}
+            >
+              重新生成
+            </button>
+          ) : null}
 
           {running ? (
             <ul className="mt-5 w-full max-w-[560px] space-y-1 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-3 text-left">
@@ -193,12 +205,6 @@ export default function GeneratePanel({
             onClick={onRetryFailed}
           >
             重试失败页
-          </button>
-        ) : null}
-        {/* 重新生成：按需求先隐藏，逻辑保留待测试 */}
-        {failed && onRetry ? (
-          <button type="button" className="hidden" onClick={onRetry}>
-            重新生成
           </button>
         ) : null}
       </footer>

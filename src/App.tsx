@@ -608,13 +608,14 @@ function App() {
   }
 
   /**
-   * 主题面板「开始生成课件」：用当前大纲与所选样式生成。
+   * 第三步的实际开跑逻辑：用当前大纲与所选样式请求后端生成。
+   * 「主题选择」的开始生成课件与失败后的「重新生成」共用同一份数据与同一起点。
    * 每次都用新线程，避免停止生成后恢复旧线程带回上一次的课件产物。
    */
-  function handleStartGeneration() {
+  function runCourseGeneration() {
     const theme = themes.find((item) => item.id === selectedThemeId)
     const outlineList = outlineDraft.length ? outlineDraft : pendingOutline
-    if (view !== 'prepare' || !theme || !outlineList.length || busy) return
+    if (!theme || !outlineList.length) return
     const controller = new AbortController()
     const runId = `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     abortRef.current = controller
@@ -655,6 +656,24 @@ function App() {
           runIdRef.current = ''
         }
       })
+  }
+
+  /** 主题面板「开始生成课件」：用当前大纲与所选样式从第三步起点开跑 */
+  function handleStartGeneration() {
+    if (view !== 'prepare' || busy) return
+    runCourseGeneration()
+  }
+
+  /**
+   * 第三步「重新生成」：生成失败后按当前数据从第三步起点重跑。
+   * 与主题面板的「开始生成课件」完全一致：同一份大纲、同一样式、同样的图起点。
+   */
+  function handleRegenerateGeneration() {
+    if (view !== 'prepare') return
+    // 失败事件到达时旧 SSE 可能还没断开，先兜底中断，避免两条流同时写状态
+    cancelActiveRun()
+    setThreadId('')
+    runCourseGeneration()
   }
 
   /** 结果页「重试失败页」：图外直调重跑，沿用最初选择的 PPT 样式 */
@@ -793,7 +812,7 @@ function App() {
         onInterruptGeneration={handleInterruptGeneration}
         onStartLecture={handleStart}
         onRetryFailed={handleRetryFailed}
-        onRetryGeneration={handleRetry}
+        onRetryGeneration={handleRegenerateGeneration}
       />
     )
   }

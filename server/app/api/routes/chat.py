@@ -45,6 +45,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _friendly_error_message(exc: BaseException) -> str:
+    """把框架英文异常转成给用户看的中文提示；其他错误保留原文。"""
+    text = str(exc)
+    if "recursion limit" in text.lower() and "reached" in text.lower():
+        return "生成出错，请重试；若仍失败，请联系管理员。"
+    return text or exc.__class__.__name__
+
+
 # ── 生成任务注册表：runId → 后台 asyncio.Task ────────────────────────────────
 # 前端中断/返回/刷新时先用 runId 调 /chat/cancel 主动 cancel 任务；
 # 同时 SSE 生成器 finally 也会兜底 cancel，避免前端只 abort 连接而漏取消。
@@ -312,7 +320,7 @@ async def chat_stream(payload: ChatRequest):
             _push_terminal(state, session_id, result)
         except Exception as exc:
             logger.exception("生成失败")
-            _emit("error", "done", message=str(exc))
+            _emit("error", "done", message=_friendly_error_message(exc))
         finally:
             events.put_nowait(None)  # 结束标记
             set_progress_emitter(None)
@@ -391,7 +399,7 @@ async def chat_confirm(payload: ConfirmRequest):
             _push_terminal(state, (state.get("sessionId") or ""), result)
         except Exception as exc:
             logger.exception("确认后恢复执行失败")
-            _emit("error", "done", message=str(exc))
+            _emit("error", "done", message=_friendly_error_message(exc))
         finally:
             events.put_nowait(None)
             set_progress_emitter(None)
@@ -468,7 +476,7 @@ async def chat_generate(payload: GenerateRequest):
             _push_terminal(state, session_id, result)
         except Exception as exc:
             logger.exception("生成课件失败")
-            _emit("error", "done", message=str(exc))
+            _emit("error", "done", message=_friendly_error_message(exc))
         finally:
             events.put_nowait(None)
             set_progress_emitter(None)
@@ -532,7 +540,7 @@ async def chat_retry(payload: RetryRequest):
             await _retry_failed_pages(session_id, payload.inds, theme=payload.theme)
         except Exception as exc:
             logger.exception("重试失败页失败")
-            _emit("error", "done", message=str(exc))
+            _emit("error", "done", message=_friendly_error_message(exc))
         finally:
             events.put_nowait(None)
             set_progress_emitter(None)

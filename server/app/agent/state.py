@@ -25,7 +25,7 @@ class CatalogModule(TypedDict):
 
     ind: int            # 序号
     title: list[str]    # 该页面内各知识点的标题
-    context: list[str]  # 与 title 一一对应的口播讲稿（90~160 字，口语连贯）
+    context: list[str]  # 与 title 一一对应的口播讲稿（130~200 字，口语连贯）
     summary: str        # 本页简介（旧数据可能缺失，读取时用空串兜底）
 
 

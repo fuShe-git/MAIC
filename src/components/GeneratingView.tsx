@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { friendlyErrorMessage } from '../api/chat'
 import type { ChatResponse, ProgressStep } from '../api/chat'
 import { useI18n } from '../i18n/context'
 import './GeneratingView.css'
@@ -147,7 +148,7 @@ export default function GeneratingView({
       ? '讲解已就绪，但有部分内容降级交付'
       : '课件已就绪，可以进入课堂了'
     : failed
-      ? '很抱歉，生成过程中出了点问题'
+      ? friendlyErrorMessage(message) || '很抱歉，生成过程中出了点问题'
       : interrupted
         ? '本次生成已停止，可重新生成或返回首页'
         : replied
@@ -229,7 +230,7 @@ export default function GeneratingView({
           <div className="gv-banner is-warn">{message || '正在重新生成，请稍候…'}</div>
         ) : null}
 
-        {failed ? <div className="gv-banner is-error">{message || '生成出错，请重试'}</div> : null}
+        {failed ? <div className="gv-banner is-error">{friendlyErrorMessage(message) || '生成出错，请重试'}</div> : null}
 
         {interrupted ? <div className="gv-banner is-warn">{message || '你已中断本次生成'}</div> : null}
 
