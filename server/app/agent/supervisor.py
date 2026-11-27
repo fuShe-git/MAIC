@@ -28,6 +28,8 @@ from app.agent.nodes import (
     _emit,
     _ensure_new_module_content,
     _parse_json,
+    _split_oversized_modules,
+    localized,
 )
 from app.agent.state import CLEAR_MARKER
 
@@ -242,7 +244,8 @@ async def supervisor_node(state: dict) -> dict:
         updates.update(_cascade_clear())
         if isinstance(edited, list) and edited:
             enriched = await _ensure_new_module_content(topic_text, edited)
-            updates["catalogList"] = enriched or edited
+            # 用户编辑后内容可能塞得过多；下游已级联清空，可安全拆页并重编号
+            updates["catalogList"] = await _split_oversized_modules(enriched or edited)
         # 用户选定的 PPT 样式随确认一起恢复，后续 page_agent 会按它生成每页视觉。
         if isinstance(answer.get("theme"), dict) and answer.get("theme"):
             updates["selectedTheme"] = answer["theme"]
@@ -266,7 +269,9 @@ async def supervisor_node(state: dict) -> dict:
     # 闲聊 / 不需要讲解：直接收尾（reply 由流式接口按最终状态推送）
     if not need_lecture or intent == "chat":
         if not state.get("reply"):
-            updates["reply"] = DEFAULT_GREETING
+            updates["reply"] = localized(
+                DEFAULT_GREETING, "Hello, I am MAIC. What would you like to learn today?"
+            )
         return {**updates, "dispatch": []}
 
     # ── 冲突处理：事实冲突 → 改派大纲重生成（级联清空下游）──────────────
@@ -325,7 +330,14 @@ async def supervisor_node(state: dict) -> dict:
     catalog = updates.get("catalogList") or state.get("catalogList") or []
     enriched = await _ensure_new_module_content(topic_text, catalog)
     if enriched is not None:
+        catalog = enriched
         updates["catalogList"] = enriched
+    # /chat/generate 直接带用户大纲进入；页面尚未生成时按内容量拆页并重编号，
+    # 避免把过多内容挤进一页。已有页面时不拆，防止 ind 与既有产物错位。
+    if not (done.get("pages") or (state.get("pageList") or [])):
+        split = await _split_oversized_modules(catalog)
+        if split != catalog:
+            updates["catalogList"] = split
 
     default_agents = _default_next(state)
     stage_of = {name: spec["stage"] for name, spec in AGENT_REGISTRY.items()}

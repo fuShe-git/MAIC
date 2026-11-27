@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { cancelGeneration, chatStream, generateCourse, retryFailedPages } from './api/chat'
+import { cancelGeneration, chatStream, generateCourse, precheckInput, retryFailedPages } from './api/chat'
 import type { ChatResponse, OutlineModule, ProgressEvent, ProgressStep } from './api/chat'
 import { getCourse } from './api/courses'
 import { generatedHtmlUrl, listGeneratedFiles } from './api/generated'
@@ -105,6 +105,10 @@ function buildModelGroups(
 function App() {
   const { t, lang } = useI18n()
   const [prompt, setPrompt] = useState('')
+  // 首页前置校验：违规 / 是否有讲解主题；失败时留在首页展示提示
+  // 存 code 而非文案，切换语言时已显示的提示会跟着翻译
+  const [precheckBusy, setPrecheckBusy] = useState(false)
+  const [precheckError, setPrecheckError] = useState('')
   // 设置弹窗开关（首页右上角齿轮入口）
   const [settingsOpen, setSettingsOpen] = useState(false)
   // 视图四态：home 首页 → prepare 准备台 → generating 生成进度 → player 课件页
@@ -128,7 +132,9 @@ function App() {
   const [themeError, setThemeError] = useState('')
   const [selectedThemeId, setSelectedThemeId] = useState('')
   const [courseTitle, setCourseTitle] = useState('')
-  // 准备阶段两条任务分别取消；课件生成阶段复用 abortRef/runIdRef 通知后端取消
+  // 前置校验单独取消；准备阶段两条任务分别取消；生成阶段复用 abortRef/runIdRef
+  const precheckAbortRef = useRef<AbortController | null>(null)
+  const precheckTokenRef = useRef('')
   const outlineAbortRef = useRef<AbortController | null>(null)
   const themeAbortRef = useRef<AbortController | null>(null)
   const outlineRunIdRef = useRef('')
@@ -140,6 +146,7 @@ function App() {
   const topicRef = useRef('')
   const settledRef = useRef(false)
   const busy =
+    precheckBusy ||
     (view === 'prepare' &&
       stage === 'prepare' &&
       (outlineStatus === 'loading' ||
@@ -269,6 +276,7 @@ function App() {
     const notifyCancel = () => {
       const runId = runIdRef.current
       const outlineRunId = outlineRunIdRef.current
+      precheckAbortRef.current?.abort()
       outlineAbortRef.current?.abort()
       themeAbortRef.current?.abort()
       if (runId) cancelGeneration(runId, true).catch(() => {})
@@ -296,7 +304,7 @@ function App() {
         outlineSettledRef.current = true
         outlineRunIdRef.current = ''
         setOutlineStatus('error')
-        setOutlineError(event.message || '没有识别到需要讲解的主题，请换一种说法后重试')
+        setOutlineError(event.message || t('precheck.NO_TOPIC'))
       }
       // 准备阶段不展示 check/safety/topic 等过程进度
       return
@@ -383,6 +391,27 @@ function App() {
     }))
   }
 
+  /** 把前置校验 code 映射成当前语言的文案；未知 code 按「未检测到讲解内容」兜底 */
+  function precheckMessage(code: string): string {
+    switch (code) {
+      case 'SAFETY_BLOCKED':
+        return t('precheck.SAFETY_BLOCKED')
+      case 'NO_LECTURE':
+        return t('precheck.NO_LECTURE')
+      case 'PRECHECK_ERROR':
+        return t('precheck.PRECHECK_ERROR')
+      case 'NO_TOPIC':
+      default:
+        return t('precheck.NO_TOPIC')
+    }
+  }
+
+  /** 取消首页前置校验请求 */
+  function cancelPrecheckTask() {
+    precheckAbortRef.current?.abort()
+    precheckAbortRef.current = null
+  }
+
   /** 取消准备阶段的大纲流（含后端任务） */
   function cancelOutlineTask() {
     const runId = outlineRunIdRef.current
@@ -402,7 +431,7 @@ function App() {
   function runOutlineStream(
     message: string,
     mode: 'loading' | 'regenerating',
-    options?: { topic?: string; outlineHint?: string },
+    options?: { topic?: string; outlineHint?: string; precheckToken?: string },
   ) {
     cancelOutlineTask()
     const controller = new AbortController()
@@ -425,6 +454,7 @@ function App() {
         outlineOnly: mode === 'regenerating',
         topic: options?.topic,
         outlineHint: options?.outlineHint,
+        precheckToken: options?.precheckToken,
       },
       handleEvent,
       controller.signal,
@@ -475,30 +505,74 @@ function App() {
       })
   }
 
-  /** 首页提交：进入准备工作台，大纲与样式并发生成 */
-  function startGeneration(text: string) {
+  /** 首页提交：先做前置校验，通过后才进入准备工作台 */
+  async function startGeneration(text: string) {
     const message = text.trim()
     if (!message || busy) return
-    sourceMessageRef.current = message
-    setCourseTitle(message)
-    setLecture(null)
-    setPendingOutline([])
-    setOutlineDraft([])
-    setThreadId('')
-    setThemes([])
-    setSelectedThemeId('')
-    setThemeError('')
-    topicRef.current = ''
-    settledRef.current = false
-    setWait(INITIAL_WAIT)
-    setView('prepare')
 
-    runOutlineStream(message, 'loading')
-    runThemeRequest({ message }, 'loading')
+    const resetPrepareState = () => {
+      setLecture(null)
+      setPendingOutline([])
+      setOutlineDraft([])
+      setThreadId('')
+      setThemes([])
+      setSelectedThemeId('')
+      setOutlineError('')
+      setThemeError('')
+      setOutlineStatus('loading')
+      setThemeStatus('loading')
+      setStage('prepare')
+      setPrepareStep('outline')
+      setWait(INITIAL_WAIT)
+      settledRef.current = false
+    }
+
+    cancelPrecheckTask()
+    cancelOutlineTask()
+    cancelThemeTask()
+    cancelActiveRun()
+
+    const controller = new AbortController()
+    precheckAbortRef.current = controller
+    setPrecheckBusy(true)
+    setPrecheckError('')
+    try {
+      const result = await precheckInput({ message, sessionId, modelId }, controller.signal)
+      if (controller.signal.aborted) return
+
+      if (!result.ok) {
+        resetPrepareState()
+        precheckTokenRef.current = ''
+        topicRef.current = ''
+        setPrecheckError(result.code || 'NO_TOPIC')
+        setView('home')
+        return
+      }
+
+      const topic = (result.topic || message).trim()
+      precheckTokenRef.current = result.token || ''
+      sourceMessageRef.current = message
+      topicRef.current = topic
+      setCourseTitle(topic)
+      resetPrepareState()
+      setView('prepare')
+
+      runOutlineStream(message, 'loading', { topic, precheckToken: result.token })
+      runThemeRequest({ message: topic }, 'loading')
+    } catch {
+      if (controller.signal.aborted) return
+      resetPrepareState()
+      precheckTokenRef.current = ''
+      setPrecheckError('PRECHECK_ERROR')
+      setView('home')
+    } finally {
+      if (precheckAbortRef.current === controller) precheckAbortRef.current = null
+      setPrecheckBusy(false)
+    }
   }
 
   function handleSubmit() {
-    startGeneration(prompt.trim())
+    void startGeneration(prompt.trim())
   }
 
   /**
@@ -519,11 +593,14 @@ function App() {
     return runId
   }
 
-  /** 返回首页：准备阶段两条任务与生成阶段任务全部取消并复位 */
+  /** 返回首页：前置校验、准备阶段两条任务与生成阶段任务全部取消并复位 */
   function handleBackToHome() {
+    cancelPrecheckTask()
     cancelOutlineTask()
     cancelThemeTask()
     cancelActiveRun()
+    setPrecheckError('')
+    precheckTokenRef.current = ''
     setLecture(null)
     setPendingOutline([])
     setOutlineDraft([])
@@ -555,7 +632,7 @@ function App() {
 
   /** 生成页「重新生成」：用同一段输入重新进入准备台 */
   function handleRetry() {
-    startGeneration(sourceMessageRef.current || prompt.trim())
+    void startGeneration(sourceMessageRef.current || prompt.trim())
   }
 
   /** 大纲编辑实时落到草稿，切步骤时不会丢失手动修改 */
@@ -571,7 +648,7 @@ function App() {
 
   /** 大纲面板「重新生成大纲」：把原始主题与用户新增页面一起交给模型重跑大纲流 */
   function handleRegenerateOutline(payload: { catalogList: OutlineModule[] }) {
-    const topic = sourceMessageRef.current || courseTitle
+    const topic = topicRef.current || sourceMessageRef.current || courseTitle
     const addedHints = payload.catalogList
       .filter((module) => module.isNew)
       .map((module, index) => {
@@ -588,9 +665,10 @@ function App() {
     setPendingOutline([])
     setOutlineDraft([])
     setThreadId('')
-    runOutlineStream(parts.join('\n'), 'regenerating', {
+    runOutlineStream(sourceMessageRef.current || courseTitle, 'regenerating', {
       topic,
-      outlineHint: addedHints.join('\n'),
+      outlineHint: [parts.join('\n'), addedHints.join('\n')].filter(Boolean).join('\n'),
+      precheckToken: precheckTokenRef.current,
     })
   }
 
@@ -868,8 +946,15 @@ function App() {
 
       <main className="composer">
         <div className="composer-head">
-          <span className="composer-tip">{t('composer.ready')}</span>
+          <span className="composer-tip">
+            {precheckBusy ? '正在校验输入内容…' : t('composer.ready')}
+          </span>
         </div>
+        {precheckError ? (
+          <div className="composer-error" role="alert">
+            {precheckMessage(precheckError)}
+          </div>
+        ) : null}
 
         <label className="sr-only" htmlFor="composer-input">
           {t('composer.placeholderPrefix')}
@@ -879,7 +964,13 @@ function App() {
           className="composer-input"
           value={prompt}
           placeholder={placeholder}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => {
+            setPrompt(event.target.value)
+            // 开始修改输入时立即清掉违规 / 未检测到主题的提示，并取消在途校验，
+            // 避免旧请求返回后把提示又写回来
+            setPrecheckError('')
+            cancelPrecheckTask()
+          }}
         />
 
         <div className="composer-foot">
@@ -987,7 +1078,7 @@ function App() {
                 strokeLinejoin="round"
               />
             </svg>
-            <span>{busy ? t('composer.generating') : t('composer.enter')}</span>
+            <span>{precheckBusy ? '校验中…' : busy ? t('composer.generating') : t('composer.enter')}</span>
           </button>
         </div>
       </main>

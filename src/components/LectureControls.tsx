@@ -126,7 +126,7 @@ export default function LectureControls({
   if (quizMode) {
     center = (
       <button className="lp-ctrl is-primary" type="button" onClick={onRewatch}>
-        重新观看
+        {t('controls.rewatch')}
       </button>
     )
   } else if (kind === 'html') {

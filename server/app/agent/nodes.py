@@ -19,7 +19,7 @@ from typing import Callable, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agent.agent import get_llm
+from app.agent.agent import get_llm, get_output_lang
 from app.agent.state import (
     AudioModule,
     CatalogModule,
@@ -116,7 +116,7 @@ CONTENT_ANALYSIS_PROMPT = """你是 MAIC（多智能体互动课堂）的内容�
 {"needLecture": true, "topic": "三国杀的玩法", "reply": "", "intent": "new_lecture", "reviseInds": []}
 
 不需要讲解时（topic 留空，reply 填一句简短的自我介绍式回复）：
-{"needLecture": false, "topic": "", "reply": "你好，我是 MAIC 助手，可以为你讲解知识并生成配套音频与页面，想听点什么？", "intent": "chat", "reviseInds": []}"""
+{"needLecture": false, "topic": "", "reply": "你好，我是MAIC助手，未检测到讲解内容，请重新描述您想了解的内容。", "intent": "chat", "reviseInds": []}"""
 
 TOPIC_ROUTING_PROMPT = """你是 MAIC 的主题分类助手，负责判断一个讲解主题是否属于桌面卡牌游戏「三国杀」。
 
@@ -147,7 +147,7 @@ NEW_MODULE_NARRATION_PROMPT = """你是 MAIC 的课件讲稿撰写助手，负�
 输入：整套课件主题、本页主题、用户填写的页面简介（可能为空）。
 要求：
 1. 讲解稿必须紧扣整套课件主题，围绕本页主题展开；用户填写的简介是要讲清的重点，必须自然融入，不要照搬原句；
-2. context 只给 1 条 130~200 字的中文口播稿，连贯口语讲述，说清是什么、为什么、怎么做，并用一个小例子或常见误区收尾，不要 markdown 符号、括号注释、编号前缀、项目符号，不要提问式互动；
+2. context 只给 1 条 130~200 字的口播稿，语言跟随本次语言要求，连贯口语讲述，说清是什么、为什么、怎么做，并用一个小例子或常见误区收尾，不要 markdown 符号、括号注释、编号前缀、项目符号，不要提问式互动；
 3. summary 用 25~45 字说明本页要讲清什么、从什么角度讲，写在卡片简介里，不要照搬讲稿原句；
 4. 不要输出 HTML 或解释文字。
 
@@ -199,15 +199,15 @@ OUTLINE_PLAN_PROMPT = """你是 MAIC（多智能体互动课堂）的课件策�
 
 要求：
 1. 必须紧扣用户给出的讲解主题：整套课件标题和每个模块都服务这个主题本身，不能擅自缩窄成某个子玩法、具体条件或换成别的主题；若主题是某款游戏的玩法，第 1 个模块必须是该游戏玩法的整体入门，不能直接跳到某个具体规则；
-2. 模块数量必须给够 8~10 个（对应 8~10 页），少于 8 个视为不合格：宁可把一个大知识点拆成两页讲透，也不要把几页的内容挤成一页；
+2. 模块数量按内容量决定，不固定：内容多就多给几个模块，宁可把一个大知识点拆成两页讲透，也不要把几页的内容挤成一页；整套课件建议 8~12 页，但以讲透内容为第一优先；
 3. 模块之间严格由浅入深，形成一条完整课程线：前 1~2 页讲「是什么、整体怎么玩」，中间逐页拆规则细节与操作技巧，最后 1~2 页讲进阶策略、常见误区与全局总结；相邻模块不能重复讲同一件事；
-4. 每个模块给 2~3 个知识点标题（title），是简短名词短语，8 字以内，彼此不重复，合起来刚好覆盖本页要讲的内容；
+4. 每个模块给 2~6 个知识点标题（title），是简短名词短语（中文 8 字以内、英文 6 词以内），彼此不重复；同一模块的知识点必须语义紧密相关、围绕同一个子主题，跨度大的内容要拆到不同模块；知识点超过 3 条的模块会由系统按语义自动拆成多页，不用你手动拆；
 5. 每个模块还要有 summary，用 25~45 字说明本页要讲清什么、从什么角度讲，写在卡片简介里；不能只是标题的复述；
 6. ind 从 1 开始连续编号；
 7. 资料只作为事实依据，不要原文照抄；资料里提到的数值、阶段、例外情况要尽量安排进对应模块；资料与主题无关时忽略它，用你自己的知识。
 
 输出要求：只输出 JSON，不要解释文字，不要代码块围栏，不要输出 HTML，不要输出 context（讲稿由后续步骤单独撰写）。
-示例（只演示字段格式，实际模块数必须达到 8~10 个）：
+示例（只演示字段格式，实际模块数与知识点数按内容量决定）：
 {"catalogList": [{"ind": 1, "summary": "先认识游戏的身份构成与胜负目标", "title": ["什么是三国杀", "身份与胜负"]}, {"ind": 2, "summary": "按判定、摸牌、出牌、弃牌四个阶段理解一个回合怎么走", "title": ["回合流程", "阶段要点"]}]}"""
 
 MODULE_SCRIPT_PROMPT = """你是 MAIC 的课件讲稿撰写助手，负责为讲解大纲里的一页写可以直接念出来的口播讲稿。
@@ -222,7 +222,7 @@ MODULE_SCRIPT_PROMPT = """你是 MAIC 的课件讲稿撰写助手，负责为讲
    - 收尾给一个小例子、一个类比或一个常见误区，帮助听众真正听懂，点到为止；
    - 最后一句自然收束，让人能顺着往下听；
 4. 相邻两条不要重复同一个信息点，也不要提前把下一页的内容讲掉；
-5. 只用口语和中文标点：不要 markdown 符号、不要括号注释、不要编号前缀、不要项目符号；不要出现任何提问式互动（例如「你有没有想过」「大家想一想」）；本页最多出现一次「注意这里」这类口头提醒；
+5. 只用口语和自然标点（跟随本次语言要求）：不要 markdown 符号、不要括号注释、不要编号前缀、不要项目符号；不要出现任何提问式互动（例如中文的「你有没有想过」「大家想一想」，英文的 "Have you ever wondered?"）；本页最多出现一次类似的口头提醒；
 6. 不要输出 HTML 或解释文字。
 
 输出要求：只输出 JSON，不要代码块围栏。
@@ -248,11 +248,12 @@ PAGE_PROMPT_TEMPLATE = """你是 MAIC 的课件前端，负责把一页口播讲
 7. 页面文字是对讲稿的「提炼」，不是讲稿的搬运（讲稿是给人听的，页面是给人看的）：
    - 每条信息条的小标题不超过 8 个字，正文写成 18~26 个字的一句话短语，可用「·」分隔两个关键词；
    - 必须自己改写和压缩，严禁整句照抄讲稿原话；
-   - 不要出现「那么」「接下来」「我们说」「注意这里」「大家」这类口播连接词，页面不需要过渡句；
+   - 不要出现「那么」「接下来」「我们说」「注意这里」「大家」（英文如 well / next / now / please note）这类口播连接词，页面不需要过渡句；
    - 讲稿里的例子、类比、易错点只保留结论，不要复述讲述过程；
    - 不要编造与讲稿矛盾的数字或规则；页面文字宜少不宜多，宁可留白。
    示例：讲稿「中餐讲究面门为尊，主位正对门口，主人坐主位，主宾在其右手边，其余人按身份年龄依次排开。」
    页面写成「主位正对门口 · 主宾居右 · 其余按身份年龄排开」，而不是照搬整句。
+8. 信息条数量必须与输入的知识点条数完全一致（输入几条就画几条，最多 3 条），不得自行增加、删减或合并知识点；宁可留白，也不要把多条内容挤进同一条里。
 
 输出要求：直接输出完整 HTML 文档（以 <html> 开头、</html> 结尾），不要任何解释文字。"""
 
@@ -264,8 +265,25 @@ RAG_TOP_K = 10
 # 页面卡片正文的字数上限：讲稿篇幅远大于页面，兜底渲染时按这个长度压缩，避免溢出
 PAGE_CARD_MAX_CHARS = 26
 
-# 单页知识点条数上限：页面右栏最多放 3 个信息条，讲稿再多也只对应 3 条版式
+# 单页知识点条数上限（右栏信息条容量）：一个模块内容超过这个数就自动拆成多页，
+# 页数由内容量决定，而不是由大纲模块条数决定。
 MAX_POINTS_PER_PAGE = 3
+
+# 大纲阶段单个模块最多允许的知识点数：超出部分交给拆页逻辑处理，不再直接截断丢弃。
+MAX_POINTS_PER_MODULE = 12
+
+# 语义拆页：把内容过多的模块按知识点相关性分组，相关的放一起，允许分得更细。
+SEMANTIC_SPLIT_PROMPT = """你是课件策划助手，负责把一组知识点标题按语义相关性分组，供后续拆成多页。
+
+要求：
+1. 语义相近、围绕同一个子主题的知识点放在同一组；跨度大、属于不同子主题的知识点必须分到不同组；
+2. 每组 1~{max_points} 条，宁可分细一点，也不要把不相关的知识点硬凑在一起；
+3. 每个知识点必须且只能出现在一个组里，不能遗漏、不能重复；
+4. 保持原始顺序的相对先后，序号小的组排在前面；
+5. 只输出 JSON，不要解释文字，不要代码块围栏。
+
+示例（输入 6 条知识点，按语义拆成 3 组）：
+{{"groups": [[0, 1], [2], [3, 4, 5]]}}"""
 
 # 兜底页面与片段包装共用的样式，保证降级时也是同一套简约风格
 PAGE_BASE_STYLE = """
@@ -319,17 +337,46 @@ def _visual_style(theme: Optional[dict]) -> str:
         return DEFAULT_VISUAL_STYLE
     return "本次课件视觉规范（优先于其他配色建议）：\n" + prompt
 
+# 输出语言要求：统一追加到 system 提示词末尾；JSON 字段名、HTML 标签等结构标识符不翻译
+_LANGUAGE_RULES: dict[str, str] = {
+    "zh": (
+        "\n\n语言要求：用户使用中文交流，请全程使用中文撰写所有面向用户的文字内容"
+        "（字段值、标题、简介、讲稿、题目、选项、解析、原因等）。"
+        "JSON 字段名、代码标识符与 HTML 标签保持原样，不要翻译。"
+    ),
+    "en": (
+        "\n\nLanguage requirement: The user is communicating in English. Write all "
+        "user-facing text (field values, titles, summaries, scripts, questions, options, "
+        "explanations, reasons, etc.) in English. Keep JSON keys, code identifiers and "
+        "HTML tags unchanged; do not translate them."
+    ),
+}
+
+
+def localized(zh_text: str, en_text: str) -> str:
+    """按当前请求语言选择用户可见文案；非英文一律用中文，避免兜底文案串语言。"""
+    return en_text if get_output_lang() == "en" else zh_text
+
+
 ## 节点
-async def _invoke_text(system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
+async def _invoke_text(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.3,
+    language: Optional[str] = None,
+) -> str:
     """调用 agent.py 里的模型，返回纯文本（system + user 两段提示词）。
 
     temperature 通过 bind 逐次覆盖：分类、抽 JSON 这类任务用 0 保证稳定，
     生成文案/页面时留一点随机性。
+    language 默认跟随本次请求的用户输入语言；内部检索等步骤可显式覆盖。
     """
+    lang = language or get_output_lang()
+    suffix = _LANGUAGE_RULES.get(lang, "")
     llm = get_llm().bind(temperature=temperature)
     result = await llm.ainvoke(
         [
-            SystemMessage(content=system_prompt),
+            SystemMessage(content=system_prompt + suffix),
             HumanMessage(content=user_prompt),
         ]
     )
@@ -424,7 +471,7 @@ def _normalize_catalog(data: dict) -> list[CatalogModule]:
     for item in data.get("catalogList") or []:
         if not isinstance(item, dict):
             continue
-        titles = _as_str_list(item.get("title"))[:MAX_POINTS_PER_PAGE]
+        titles = _as_str_list(item.get("title"))[:MAX_POINTS_PER_MODULE]
         scripts = (_clean_script(content) for content in _as_str_list(item.get("context")))
         contexts = [script for script in scripts if script]
         count = min(len(titles), len(contexts))  # 以短的一侧为准，保证一一对应
@@ -450,7 +497,7 @@ def _normalize_plan(data: dict) -> list[CatalogModule]:
     for item in data.get("catalogList") or []:
         if not isinstance(item, dict):
             continue
-        titles = _as_str_list(item.get("title"))[:MAX_POINTS_PER_PAGE]
+        titles = _as_str_list(item.get("title"))[:MAX_POINTS_PER_MODULE]
         if not titles:
             continue
         summary = str(item.get("summary") or "").strip()[:120]
@@ -465,6 +512,100 @@ def _normalize_plan(data: dict) -> list[CatalogModule]:
             }
         )
     return plan
+
+
+def _mechanical_groups(count: int) -> list[list[int]]:
+    """按数量机械切片，仅作为语义分组失败时的兜底。"""
+    return [
+        list(range(start, min(start + MAX_POINTS_PER_PAGE, count)))
+        for start in range(0, count, MAX_POINTS_PER_PAGE)
+    ]
+
+
+async def _group_points_semantically(titles: list[str], summary: str) -> list[list[int]]:
+    """调用模型按语义相关性给知识点分组，返回索引分组；失败时回退机械切片。"""
+    indexed = "\n".join(f"{i}. {title}" for i, title in enumerate(titles))
+    user_prompt = (
+        f"模块简介：{summary}\n"
+        f"知识点（带序号）：\n{indexed}\n\n"
+        "请按语义相关性把上面的知识点分组。"
+    )
+    try:
+        prompt = SEMANTIC_SPLIT_PROMPT.format(max_points=MAX_POINTS_PER_PAGE)
+        raw = await _invoke_text(prompt, user_prompt, temperature=0)
+        groups = _parse_json(raw).get("groups")
+        if not isinstance(groups, list) or not groups:
+            raise ValueError("模型未返回可用的分组")
+        normalized: list[list[int]] = []
+        seen: set[int] = set()
+        for group in groups:
+            if not isinstance(group, list) or not group:
+                continue
+            indexes: list[int] = []
+            for item in group:
+                text = str(item).strip()
+                if not text.lstrip("-").isdigit():
+                    continue
+                index = int(text)
+                if 0 <= index < len(titles) and index not in seen:
+                    seen.add(index)
+                    indexes.append(index)
+            if indexes:
+                normalized.append(sorted(indexes))
+        if len(seen) != len(titles) or not normalized:
+            raise ValueError("分组未完整覆盖全部知识点")
+        # 模型偶尔会给出超过单页容量的组，再按数量切开，保证每页不挤
+        capped: list[list[int]] = []
+        for group in normalized:
+            for start in range(0, len(group), MAX_POINTS_PER_PAGE):
+                capped.append(group[start : start + MAX_POINTS_PER_PAGE])
+        capped.sort(key=lambda group: group[0])
+        return capped
+    except Exception as exc:
+        logger.warning("语义拆页失败，回退为按数量切片：%s", exc)
+        return _mechanical_groups(len(titles))
+
+
+async def _split_oversized_modules(modules: list[CatalogModule]) -> list[CatalogModule]:
+    """按知识点语义相关性把内容过多的模块拆成多页。
+
+    超过 MAX_POINTS_PER_PAGE 条的模块先由模型按语义聚类，相关的知识点放一起，
+    每组 1~MAX_POINTS_PER_PAGE 条；模型失败或输出非法时回退为按数量机械切片。
+    title 与 context 按索引同步切分，后续页面 / 音频 / 组装按新 ind 对齐。
+    """
+    result: list[CatalogModule] = []
+    for module in modules or []:
+        if not isinstance(module, dict):
+            continue
+        titles = list(module.get("title") or [])
+        contexts = list(module.get("context") or [])
+        summary = str(module.get("summary") or "").strip()
+        if len(titles) <= MAX_POINTS_PER_PAGE:
+            result.append(dict(module))
+            continue
+
+        groups = await _group_points_semantically(titles, summary)
+        for part, indexes in enumerate(groups):
+            if part == 0:
+                part_summary = summary
+            else:
+                part_summary = f"{summary}（续{part}）" if summary else f"本页要点（续{part}）"
+            split_module = dict(module)
+            split_module.update(
+                {
+                    "ind": 0,  # 下方统一重排，避免重复编号
+                    "title": [titles[i] for i in indexes],
+                    "context": [contexts[i] for i in indexes if i < len(contexts)] if contexts else [],
+                    "summary": part_summary,
+                }
+            )
+            # 拆出的新分片需要重新判定讲稿是否就绪，不能继承旧模块的完成标记
+            split_module.pop("_narrationReady", None)
+            result.append(split_module)
+
+    for ind, module in enumerate(result, 1):
+        module["ind"] = ind
+    return result
 
 
 def _fallback_script(topic: str, title: str, summary: str) -> str:
@@ -616,7 +757,8 @@ async def _build_catalog(topic: str, docs: list[str], hint: str = "") -> list[Ca
         f"{extra}"
     )
     raw = await _invoke_text(OUTLINE_PLAN_PROMPT, user_prompt, temperature=0.4)
-    plan = _normalize_plan(_parse_json(raw))
+    # 先按单页容量拆页，再按页补写讲稿：每页知识点不超过 3 条，页面不会挤成一团
+    plan = await _split_oversized_modules(_normalize_plan(_parse_json(raw)))
     if plan and len(plan) < 6:  # 页数明显没给够时留痕，便于排查模型偷懒
         logger.warning("大纲只规划出 %s 页，少于预期的 8~10 页：%s", len(plan), raw[:200])
 
@@ -862,11 +1004,14 @@ async def _build_page_raw(
     theme: Optional[dict] = None,
 ) -> str:
     """生成页面本体（不注入脚本），失败时回退到兜底模板。"""
+    point_count = len(module.get("title") or [])
     user_prompt = (
         f"整套课件主题（页面顶部课程名必须使用原文，不可改写或缩窄）：{topic}\n"
         f"页面主标题写本页知识点，副标题点明它在整套课件中的位置；课程名始终以「整套课件主题」为准。\n"
         f"本页序号：第 {module['ind']} 页，共 {total} 页\n"
         f"本页口播讲稿（供你理解内容，不是页面文案，页面文字要从中提炼）：\n{_module_points(module)}\n\n"
+        f"本页共 {point_count} 个知识点，页面信息条必须一条不差地对应这 {point_count} 条，"
+        "不得自行增加、删减或合并；即使所选视觉规范描述了其他条数，也以本页实际知识点数为准。\n\n"
         "请据此生成这一页的 HTML：主标题概括本页核心知识点，副标题点明本页在整套课件中的位置；"
         "卡片和横幅里的文字都要压缩成短语，不要照抄讲稿里的原句。"
     )

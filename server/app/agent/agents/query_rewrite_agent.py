@@ -21,8 +21,9 @@ async def query_rewrite_agent(state: dict) -> dict:
     if not topic:
         return {"queries": [], "stageDone": {"query": True}}
 
+    # 知识库以中文资料为主，检索词固定中文；最终回答语言仍跟随用户输入
     raw = await _invoke_text(
-        QUERY_REWRITE_PROMPT, f"讲解主题：{topic}", temperature=0.3
+        QUERY_REWRITE_PROMPT, f"讲解主题：{topic}", temperature=0.3, language="zh"
     )
     data = _parse_json(raw)
     queries = [q for q in _as_str_list(data.get("queries")) if q][:5]

@@ -21,7 +21,7 @@ THEME_PROMPT = """你是 MAIC 的课件视觉设计师，请为这堂课设计 3
 3. previewColors 含 background/primary/accent/text 四个字段，值必须是 6 位十六进制颜色（例如 #2F5BEA）；
 4. stylePrompt 是给页面生成模型看的视觉规范，写清背景色、主色、卡片样式、标题层级和底部横幅风格；
 5. 三个模板要在配色和气质上明显不同，例如学术蓝、青绿笔记、暮紫剧场；
-6. 所有文字用中文，不要 markdown 符号；只输出 JSON，不要解释文字或代码块围栏。
+6. 所有文字与用户输入语言一致，不要 markdown 符号；只输出 JSON，不要解释文字或代码块围栏。
 
 输出格式：
 {"themes": [{"id": "style-a", "name": "深蓝课堂", "description": "适合知识点密集的讲解", "previewColors": {"background": "#F4F7FF", "primary": "#2F5BEA", "accent": "#6C8CFF", "text": "#1B2440"}, "stylePrompt": "使用深蓝与白色为主的 academic 版式……"}]}"""

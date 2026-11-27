@@ -14,7 +14,11 @@ from app.agent.nodes import (
     _emit,
     _invoke_text,
     _parse_json,
+    localized,
 )
+
+_EN_GREETING = "Hello, I am MAIC. What would you like to learn today?"
+_EN_NO_TOPIC = "Hello, I am MAIC. No learning topic was detected. Please describe what you would like to learn."
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +38,28 @@ def _format_history(history: list[dict]) -> str:
 
 
 async def intent_agent(state: dict) -> dict:
-    """分析用户输入：是否需要讲解、讲解主题、多轮意图。"""
+    """分析用户输入：是否需要讲解、讲解主题、多轮意图。
+
+    strictTopic=True 为前置预检专用：没有归纳出主题时直接判失败，
+    不再用用户输入兜底，避免把整句操作指令当成讲解主题。
+    """
     _emit("check", "start", message="开始检查是否可以讲解")
     user_issue = (state.get("userIssue") or "").strip()
+    strict = bool(state.get("strictTopic"))
+    no_topic_reply = localized(
+        "你好，我是MAIC助手，未检测到讲解内容，请重新描述您想了解的内容。", _EN_NO_TOPIC
+    )
 
     # 空输入不必走模型，直接给引导语
     if not user_issue:
         _emit("check", "done")
         return {
             "needLecture": False,
-            "reply": DEFAULT_GREETING,
+            "reply": no_topic_reply if strict else localized(DEFAULT_GREETING, _EN_GREETING),
             "topic": "",
             "intent": "chat",
             "stageDone": {"intent": True},
+            "noTopic": True,
         }
 
     history_text = _format_history(state.get("history") or [])
@@ -77,7 +90,7 @@ async def intent_agent(state: dict) -> dict:
 
     _emit("check", "done")
     if not need_lecture:
-        reply = str(data.get("reply", "")).strip() or DEFAULT_GREETING
+        reply = str(data.get("reply", "")).strip() or localized(DEFAULT_GREETING, _EN_GREETING)
         # 闲聊：图在此短路结束，reply 事件由流式接口按最终状态统一推送
         return {
             "needLecture": False,
@@ -85,10 +98,21 @@ async def intent_agent(state: dict) -> dict:
             "topic": "",
             "intent": "chat",
             "stageDone": {"intent": True},
+            "noTopic": False,
         }
 
-    # 需要讲解：产出规范化主题
-    topic = str(data.get("topic", "")).strip() or user_issue
+    # 需要讲解：产出规范化主题；严格模式下没有主题直接判失败
+    raw_topic = str(data.get("topic", "")).strip()
+    if strict and not raw_topic:
+        return {
+            "needLecture": False,
+            "reply": no_topic_reply,
+            "topic": "",
+            "intent": "chat",
+            "stageDone": {"intent": True},
+            "noTopic": True,
+        }
+    topic = raw_topic or user_issue
     # 插一步「讲解主题」：等待页展示「讲解主题：xxx」；闲聊分支不发，直接结束
     _emit("topic", "start", topic=topic, message=f"讲解主题：{topic}")
     return {
@@ -97,4 +121,5 @@ async def intent_agent(state: dict) -> dict:
         "intent": intent,
         "reviseInds": revise_inds,
         "stageDone": {"intent": True},
+        "noTopic": False,
     }

@@ -1,5 +1,6 @@
 """对话接口（v4）：多个接口共用一套 SSE 进度事件。
 
+- POST /chat/precheck 轻量前置校验（输入违规 + 是否有讲解主题）；
 - POST /chat        一次性同步调用（既有行为不变）；
 - POST /chat/stream SSE 进度流（新增 confirm 终态、partial/failedPages 终态字段）；
 - POST /chat/confirm 人工确认大纲后恢复执行（SSE，interrupt 恢复）；
@@ -22,8 +23,17 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.agent import sessions
-from app.agent.agent import reset_llm_config, resolve_llm_config, set_llm_config
+from app.agent.agent import (
+    detect_output_lang,
+    reset_llm_config,
+    reset_output_lang,
+    resolve_llm_config,
+    set_llm_config,
+    set_output_lang,
+)
 from app.agent.agents.assemble_agent import _append_quiz_section, _quiz_section
+from app.agent.agents.intent_agent import intent_agent
+from app.agent.agents.safety_agent import check_text
 from app.agent.agents.theme_agent import generate_theme_templates
 from app.agent.graph import is_interrupted, resume_classroom, run_classroom, start_classroom
 from app.agent.nodes import (
@@ -33,6 +43,7 @@ from app.agent.nodes import (
     _emit,
     _is_page_topic_relevant,
     _module_outline,
+    localized,
     set_progress_emitter,
 )
 from app.core.paths import artifact_url
@@ -46,11 +57,27 @@ router = APIRouter()
 
 
 def _friendly_error_message(exc: BaseException) -> str:
-    """把框架英文异常转成给用户看的中文提示；其他错误保留原文。"""
+    """把框架英文异常转成用户可理解的提示；其他错误保留原文。"""
     text = str(exc)
     if "recursion limit" in text.lower() and "reached" in text.lower():
-        return "生成出错，请重试；若仍失败，请联系管理员。"
+        return localized(
+            "生成出错，请重试；若仍失败，请联系管理员。",
+            "Generation failed. Please retry, and contact the administrator if it persists.",
+        )
     return text or exc.__class__.__name__
+
+
+def _request_lang(payload) -> str:
+    """从各请求体推断输出语言：用户原话 / 主题优先，其次大纲文本与会话主题。"""
+    text = str(getattr(payload, "message", "") or "")
+    text = text or str(getattr(payload, "topic", "") or "")
+    if not text and getattr(payload, "catalogList", None):
+        text = json.dumps(payload.catalogList, ensure_ascii=False)
+    if not text:
+        session_id = str(getattr(payload, "sessionId", "") or "")
+        if session_id:
+            text = str((sessions.get_snapshot(session_id) or {}).get("topic") or "")
+    return detect_output_lang(text)
 
 
 # ── 生成任务注册表：runId → 后台 asyncio.Task ────────────────────────────────
@@ -90,6 +117,21 @@ class ChatRequest(BaseModel):
     history: Optional[list] = None       # 多轮历史 [{role, content}]（可选）
     runId: Optional[str] = None          # 本次生成任务 id（中断/取消定位用）
     modelId: Optional[str] = None        # 所选模型「配置id:模型id」；空 / platform-default 用系统默认
+    precheckToken: Optional[str] = None  # 前置校验凭证；匹配时跳过图内输入审核与意图分析
+
+
+class PrecheckRequest(BaseModel):
+    message: str
+    sessionId: Optional[str] = None
+    modelId: Optional[str] = None
+
+
+class PrecheckResponse(BaseModel):
+    ok: bool
+    code: str = ""                       # SAFETY_BLOCKED / NO_TOPIC / NO_LECTURE / PRECHECK_ERROR
+    message: str = ""
+    topic: str = ""
+    token: str = ""                      # 成功时下发，后续 /chat/stream 携带以跳过重复校验
 
 
 class ChatResponse(BaseModel):
@@ -162,12 +204,80 @@ class CancelRequest(BaseModel):
     runId: str                           # 要取消的生成任务 id
 
 
+# ── POST /chat/precheck：进入生成页前做输入违规 + 是否有讲解主题校验 ────────
+@router.post("/chat/precheck")
+async def chat_precheck(payload: PrecheckRequest) -> PrecheckResponse:
+    """轻量预检：只跑输入审核与意图分析，不生成大纲、不生成样式。"""
+    message = (payload.message or "").strip()
+    session_id = (payload.sessionId or "").strip()
+    model_config = await resolve_llm_config(payload.modelId)
+    llm_token = set_llm_config(model_config)
+    lang_token = set_output_lang(detect_output_lang(message))
+    try:
+        if not message:
+            return PrecheckResponse(
+                ok=False,
+                code="NO_TOPIC",
+                message=localized("请输入要讲解的内容", "Please enter a topic to learn"),
+            )
+        safe, reason = await check_text(message, mode="input")
+        if not safe:
+            return PrecheckResponse(
+                ok=False,
+                code="SAFETY_BLOCKED",
+                message=localized(
+                    "抱歉，你的输入包含不合规内容，我不能为你生成课件。换个话题试试吧。",
+                    "Sorry, your input contains inappropriate content. I cannot generate a courseware for it. Please try another topic.",
+                ),
+            )
+
+        result = await intent_agent(
+            {
+                "userIssue": message,
+                "history": sessions.get_history(session_id),
+                "strictTopic": True,
+            }
+        )
+        topic = str(result.get("topic") or "").strip()
+        if not result.get("needLecture") or not topic:
+            code = (
+                "NO_TOPIC"
+                if result.get("noTopic") or not topic
+                else "NO_LECTURE"
+            )
+            return PrecheckResponse(
+                ok=False,
+                code=code,
+                message=str(
+                    result.get("reply")
+                    or localized(
+                        "你好，我是MAIC助手，未检测到讲解内容，请重新描述您想了解的内容。",
+                        "Hello, I am MAIC. No learning topic was detected. Please describe what you would like to learn.",
+                    )
+                ),
+            )
+
+        token = sessions.save_precheck(session_id, message, topic)
+        return PrecheckResponse(ok=True, topic=topic, token=token)
+    except Exception as exc:
+        logger.exception("前置校验失败")
+        return PrecheckResponse(
+            ok=False,
+            code="PRECHECK_ERROR",
+            message=localized(f"校验失败，请稍后重试：{exc}", f"Pre-check failed, please try again: {exc}")[:200],
+        )
+    finally:
+        reset_output_lang(lang_token)
+        reset_llm_config(llm_token)
+
+
 # ── POST /chat/themes：生成或重新生成 PPT 样式模板（普通 JSON，不走 SSE）────
 @router.post("/chat/themes")
 async def chat_themes(payload: ThemeRequest) -> ThemeListResponse:
     """一次生成 3 个视觉样式；失败时返回内置模板并标记 degraded。"""
     model_config = await resolve_llm_config(payload.modelId)
     llm_token = set_llm_config(model_config)
+    lang_token = set_output_lang(detect_output_lang(payload.message))
     try:
         themes, degraded = await generate_theme_templates(
             message=payload.message.strip(),
@@ -176,6 +286,7 @@ async def chat_themes(payload: ThemeRequest) -> ThemeListResponse:
         )
         return ThemeListResponse(themes=themes, degraded=degraded)
     finally:
+        reset_output_lang(lang_token)
         reset_llm_config(llm_token)
 
 
@@ -254,8 +365,13 @@ async def chat(payload: ChatRequest):
     """同步调用图，返回最终结果；不再推送进度事件。"""
     session_id = (payload.sessionId or "").strip()
     history = sessions.get_history(session_id) if session_id else []
+    prechecked_topic = (
+        sessions.get_precheck_topic(session_id, payload.precheckToken, payload.message)
+        if payload.precheckToken else ""
+    )
     # 解析所选模型并注入当前上下文；get_llm 会在本次请求内优先使用它
     token = set_llm_config(await resolve_llm_config(payload.modelId))
+    lang_token = set_output_lang(detect_output_lang(payload.message))
     try:
         state = await run_classroom(
             payload.message,
@@ -264,10 +380,12 @@ async def chat(payload: ChatRequest):
             outline_only=payload.outlineOnly,
             topic=payload.topic,
             outline_hint=payload.outlineHint,
+            prechecked_topic=prechecked_topic,
             history=history,
             session_id=session_id,
         )
     finally:
+        reset_output_lang(lang_token)
         reset_llm_config(token)
     result = _terminal_payload(state)
     if session_id and result["needLecture"]:
@@ -295,6 +413,10 @@ async def chat_stream(payload: ChatRequest):
 
     # 先取历史（不含本轮消息）供意图识别，再记录本轮用户消息
     history = sessions.get_history(session_id) if session_id else []
+    prechecked_topic = (
+        sessions.get_precheck_topic(session_id, payload.precheckToken, payload.message)
+        if payload.precheckToken else ""
+    )
     if session_id:
         sessions.append_message(session_id, "user", payload.message)
 
@@ -307,6 +429,7 @@ async def chat_stream(payload: ChatRequest):
                 outline_only=payload.outlineOnly,
                 topic=payload.topic,
                 outline_hint=payload.outlineHint,
+                prechecked_topic=prechecked_topic,
                 history=history,
                 session_id=session_id,
             )
@@ -329,6 +452,7 @@ async def chat_stream(payload: ChatRequest):
         set_progress_emitter(events.put_nowait)
         # create_task 会复制当前上下文：后台任务里的 get_llm 能读到本次所选模型
         llm_token = set_llm_config(model_config)
+        lang_token = set_output_lang(_request_lang(payload))
         task = asyncio.create_task(_runner())
         _register_task(run_id, task)
         try:
@@ -354,6 +478,7 @@ async def chat_stream(payload: ChatRequest):
             except Exception:
                 logger.exception("生成任务收尾异常")
             finally:
+                reset_output_lang(lang_token)
                 reset_llm_config(llm_token)
 
     return StreamingResponse(
@@ -408,6 +533,7 @@ async def chat_confirm(payload: ConfirmRequest):
         set_progress_emitter(events.put_nowait)
         # create_task 会复制当前上下文：后台任务里的 get_llm 能读到本次所选模型
         llm_token = set_llm_config(model_config)
+        lang_token = set_output_lang(_request_lang(payload))
         task = asyncio.create_task(_runner())
         _register_task(run_id, task)
         try:
@@ -433,6 +559,7 @@ async def chat_confirm(payload: ConfirmRequest):
             except Exception:
                 logger.exception("生成任务收尾异常")
             finally:
+                reset_output_lang(lang_token)
                 reset_llm_config(llm_token)
 
     return StreamingResponse(
@@ -485,6 +612,7 @@ async def chat_generate(payload: GenerateRequest):
         set_progress_emitter(events.put_nowait)
         # create_task 会复制当前上下文：后台任务里的 get_llm 能读到本次所选模型
         llm_token = set_llm_config(model_config)
+        lang_token = set_output_lang(_request_lang(payload))
         task = asyncio.create_task(_runner())
         _register_task(run_id, task)
         try:
@@ -509,6 +637,7 @@ async def chat_generate(payload: GenerateRequest):
             except Exception:
                 logger.exception("生成任务收尾异常")
             finally:
+                reset_output_lang(lang_token)
                 reset_llm_config(llm_token)
 
     return StreamingResponse(
@@ -549,6 +678,7 @@ async def chat_retry(payload: RetryRequest):
         set_progress_emitter(events.put_nowait)
         # create_task 会复制当前上下文：后台任务里的 get_llm 能读到本次所选模型
         llm_token = set_llm_config(model_config)
+        lang_token = set_output_lang(_request_lang(payload))
         task = asyncio.create_task(_runner())
         _register_task(run_id, task)
         try:
@@ -574,6 +704,7 @@ async def chat_retry(payload: RetryRequest):
             except Exception:
                 logger.exception("生成任务收尾异常")
             finally:
+                reset_output_lang(lang_token)
                 reset_llm_config(llm_token)
 
     return StreamingResponse(

@@ -15,6 +15,7 @@
 import asyncio
 import logging
 import os
+import re
 from contextvars import ContextVar, Token
 from functools import lru_cache
 from typing import Optional
@@ -34,6 +35,42 @@ _LLM_CONFIG: ContextVar[Optional[dict]] = ContextVar("maic_llm_config", default=
 
 # 前端「系统默认」选项的哨兵值，与 storage 层保持一致
 _PLATFORM_DEFAULT_ID = llm_config_db.PLATFORM_DEFAULT_ID
+
+# 本次请求的输出语言（zh / en），与各接口的用户输入绑定
+_OUTPUT_LANG: ContextVar[str] = ContextVar("maic_output_lang", default="zh")
+
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_LATIN_RE = re.compile(r"[A-Za-z]")
+
+
+def detect_output_lang(text: str) -> str:
+    """按用户输入识别输出语言：含汉字判中文，否则出现英文字母判英文，默认中文。"""
+    sample = str(text or "")[:2000]
+    if _CJK_RE.search(sample):
+        return "zh"
+    if _LATIN_RE.search(sample):
+        return "en"
+    return "zh"
+
+
+def set_output_lang(lang: str) -> Token:
+    """在接口层设置本次请求的输出语言，返回用于复原的 Token。"""
+    return _OUTPUT_LANG.set("en" if lang == "en" else "zh")
+
+
+def reset_output_lang(token: Optional[Token]) -> None:
+    """复原输出语言上下文；跨任务 reset 会抛 ValueError，直接忽略。"""
+    if token is None:
+        return
+    try:
+        _OUTPUT_LANG.reset(token)
+    except ValueError:
+        logger.debug("输出语言上下文已不存在，忽略复原", exc_info=True)
+
+
+def get_output_lang() -> str:
+    """当前请求的目标输出语言。"""
+    return _OUTPUT_LANG.get()
 
 
 def set_llm_config(config: Optional[dict]) -> Token:

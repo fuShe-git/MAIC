@@ -69,6 +69,17 @@
   white-space: nowrap;
 }
 
+.composer-error {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1px solid rgba(216, 87, 99, 0.35);
+  border-radius: 8px;
+  background: rgba(216, 87, 99, 0.08);
+  color: #d85763;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .composer-input {
   display: block;
   width: 100%;

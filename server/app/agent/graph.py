@@ -82,6 +82,7 @@ async def run_classroom(
     outline_only: bool = False,
     topic: Optional[str] = None,
     outline_hint: Optional[str] = None,
+    prechecked_topic: Optional[str] = None,
 ) -> dict:
     """跑一整条生成链路，返回最终状态（含 courseHtml / videoUrl 等）。
 
@@ -92,14 +93,22 @@ async def run_classroom(
     - session_id：会话 id，产物快照的键；
     - outline_only：True 时跳过查询改写与检索，只跑安全校验 + 大纲生成；
     - topic / outline_hint：重生成大纲时的真实主题与用户补充要求，避免把整段指令当成主题。
+    - prechecked_topic：前置预检已通过的规范化主题；提供时跳过图内输入审核与意图分析。
     """
     tid = (thread_id or "").strip() or uuid4().hex
     config = {"configurable": {"thread_id": tid}, "recursion_limit": 30}
+    checked_topic = (prechecked_topic or "").strip()
+    stage_done: dict[str, bool] = {}
+    if checked_topic:
+        stage_done["intent"] = True
+    if outline_only:
+        stage_done.update({"intent": True, "query": True, "research": True})
+
     initial: SimpleState = {
         "userIssue": user_issue,
         "needLecture": True,
         "reply": "",
-        "topic": (topic or "").strip() or user_issue,
+        "topic": checked_topic or (topic or "").strip() or user_issue,
         "outlineHint": (outline_hint or "").strip(),
         "catalogList": [],
         "audioList": [],
@@ -108,7 +117,7 @@ async def run_classroom(
         "videoUrl": "",
         "history": [dict(item) for item in (history or [])],
         "sessionId": (session_id or "").strip(),
-        "intent": "new_lecture" if outline_only else "",
+        "intent": "new_lecture" if (outline_only or checked_topic) else "",
         "reviseInds": [],
         "courseId": "",
         "outlineConfirmed": False,
@@ -119,9 +128,8 @@ async def run_classroom(
         "outputUnsafe": False,
         "dispatch": [],
         "pageTargets": [],
-        "stageDone": (
-            {"intent": True, "query": True, "research": True} if outline_only else {}
-        ),
+        "inputChecked": bool(checked_topic),
+        "stageDone": stage_done,
     }
     return await classroom_graph.ainvoke(initial, config=config)
 
@@ -167,6 +175,7 @@ async def start_classroom(
         "outputUnsafe": False,
         "dispatch": [],
         "pageTargets": [],
+        "inputChecked": True,
         "stageDone": {"intent": True, "query": True, "research": True, "outline": True},
     }
     return await classroom_graph.ainvoke(initial, config=config)

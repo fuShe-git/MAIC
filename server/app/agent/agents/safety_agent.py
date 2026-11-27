@@ -10,7 +10,7 @@ mode 取 "input" / "output"，仅用于日志区分。
 import logging
 import re
 
-from app.agent.nodes import SAFETY_PROMPT, _invoke_text, _parse_json
+from app.agent.nodes import SAFETY_PROMPT, _invoke_text, _parse_json, localized
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +87,13 @@ async def safety_input_node(state: dict) -> dict:
     """
     from app.agent.nodes import _emit
 
+    # 前置预检已经审核过同一段输入，图内不重复检查
+    if state.get("inputChecked"):
+        return {}
+
     _emit("safety", "start", message="正在审核输入内容…")
     user_issue = (state.get("userIssue") or "").strip()
-    print('开始输入审核')
     ok, reason = await check_text(user_issue, mode="input")
-    print('输入审核结果', ok, '二参',reason)
     if ok:
         _emit("safety", "done", message="输入审核通过")
         return {}
@@ -100,7 +102,10 @@ async def safety_input_node(state: dict) -> dict:
     return {
         "needLecture": False,
         "topic": "",
-        "reply": "抱歉，你的输入包含不合规内容，我不能为你生成课件。换个话题试试吧。",
+        "reply": localized(
+            "抱歉，你的输入包含不合规内容，我不能为你生成课件。换个话题试试吧。",
+            "Sorry, your input contains inappropriate content. I cannot generate a courseware for it. Please try another topic.",
+        ),
     }
 
 
@@ -132,6 +137,8 @@ async def safety_output_node(state: dict) -> dict:
     _emit("safety", "done", message="课件内容未通过安全审核")
     return {
         "outputUnsafe": True,
-        "failMessage": f"课件内容未通过安全审核：{reason}",
+        "failMessage": localized(
+            f"课件内容未通过安全审核：{reason}", f"Courseware content failed safety review: {reason}"
+        ),
         "stageDone": {"safety_output": True},
     }

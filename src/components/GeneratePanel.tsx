@@ -1,5 +1,6 @@
 import { friendlyErrorMessage } from '../api/chat'
 import type { ChatResponse, ProgressStep } from '../api/chat'
+import { useI18n } from '../i18n/context'
 import type { WaitStatus } from './GeneratingView'
 
 interface GeneratePanelProps {
@@ -21,15 +22,8 @@ interface GeneratePanelProps {
   onRetry?: () => void
 }
 
-/** 进度清单：前置阶段不展示，从页面生成开始 */
-const STEP_DEFS: Array<{ key: ProgressStep; label: string }> = [
-  { key: 'pages', label: '生成页面' },
-  { key: 'audio', label: '合成音频' },
-  { key: 'quiz', label: '课后练习' },
-  { key: 'assemble', label: '组装课件' },
-  { key: 'retry', label: '重试失败页' },
-  { key: 'done', label: '生成完毕' },
-]
+/** 进度清单顺序：前置阶段不展示，从页面生成开始 */
+const STEP_KEYS: ProgressStep[] = ['pages', 'audio', 'quiz', 'assemble', 'retry', 'done']
 
 function CheckIcon() {
   return (
@@ -60,33 +54,43 @@ export default function GeneratePanel({
   onRetryFailed,
   onRetry,
 }: GeneratePanelProps) {
+  const { t } = useI18n()
   const running = status === 'running' || status === 'retrying'
   const ready = status === 'ready'
   const failed = status === 'failed'
 
+  const stepLabels: Record<string, string> = {
+    pages: t('generate.step.pages'),
+    audio: t('generate.step.audio'),
+    quiz: t('generate.step.quiz'),
+    assemble: t('generate.step.assemble'),
+    confirm: t('generate.step.confirm'),
+    retry: t('generate.step.retry'),
+    done: t('generate.step.done'),
+  }
   const activeStep: ProgressStep | null = status === 'retrying' ? 'retry' : step
-  const visibleSteps = STEP_DEFS.filter((def) => def.key !== 'retry' || activeStep === 'retry')
+  const visibleSteps = STEP_KEYS.filter((key) => key !== 'retry' || activeStep === 'retry').map(
+    (key) => ({ key, label: stepLabels[key] ?? key }),
+  )
   const activeIndex = visibleSteps.findIndex((def) => def.key === activeStep)
 
   const failedPages = lecture?.failedPages ?? []
   const partial = Boolean(lecture?.partial) || failedPages.length > 0
 
-  const displayMessage = friendlyErrorMessage(message)
-  const title = ready ? '课件已生成' : failed ? '生成失败' : '正在生成课件'
+  const displayMessage = friendlyErrorMessage(message, t('gen.errorBanner'))
+  const title = ready ? t('generate.ready') : failed ? t('generate.failed') : t('generate.title')
   const subtitle = ready
     ? partial
-      ? '课件已就绪，但有部分内容降级交付'
-      : '课件已就绪，可以进入课堂了'
+      ? t('generate.subtitleReadyPartial')
+      : t('generate.subtitleReady')
     : failed
-      ? displayMessage || '生成过程中出了点问题，可返回上一步调整后重新开始'
-      : '正在按大纲与所选样式生成页面与讲解音频'
+      ? displayMessage || t('generate.subtitleFailed')
+      : t('generate.subtitleRunning')
 
   return (
     <section className="pw-fade-in flex min-h-0 flex-1 flex-col gap-3">
       <header className="shrink-0">
-        <p className="m-0 text-[13px] leading-5 text-[var(--text-dim)]">
-          生成过程中可以随时停止，停止后会回到上一步，方便继续调整。
-        </p>
+        <p className="m-0 text-[13px] leading-5 text-[var(--text-dim)]">{t('generate.hint')}</p>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-1 pw-scroll">
@@ -118,7 +122,7 @@ export default function GeneratePanel({
               className="mt-4 cursor-pointer rounded-xl bg-gradient-to-r from-[#5B45E0] to-[#8B7BFF] px-4 py-2 text-[13px] font-semibold text-white shadow-[0_10px_24px_-12px_rgba(91,69,224,0.9)] transition hover:brightness-110"
               onClick={onRetry}
             >
-              重新生成
+              {t('generate.regenerate')}
             </button>
           ) : null}
 
@@ -167,11 +171,14 @@ export default function GeneratePanel({
 
           {ready && partial ? (
             <div className="mt-4 w-full max-w-[560px] rounded-xl border border-[var(--border)] bg-[var(--surface-hover)] p-3 text-left text-[12px] text-[var(--text-dim)]">
-              以下内容生成失败，已降级交付：
+              {t('generate.failedHint')}
               {failedPages.map((row) => (
                 <div key={`${row.ind}-${row.stage}`} className="mt-1">
-                  第 {row.ind} 页 · {row.stage === 'audio' ? '音频合成失败' : '页面生成失败'}
-                  {row.error ? `（${row.error}）` : ''}
+                  {t('generate.failedPageLine', {
+                    n: row.ind,
+                    reason: t(row.stage === 'audio' ? 'generate.failedAudio' : 'generate.failedPage'),
+                  })}
+                  {row.error ? t('generate.failedError', { error: row.error }) : ''}
                 </div>
               ))}
             </div>
@@ -186,7 +193,7 @@ export default function GeneratePanel({
             className="cursor-pointer rounded-xl border border-[#F2C7C7] bg-[#FDECEC] px-4 py-2 text-[13px] font-medium text-[#B3261E] transition hover:bg-[#FBDDDD]"
             onClick={onInterrupt}
           >
-            停止生成
+            {t('generate.stop')}
           </button>
         ) : null}
         {ready ? (
@@ -195,7 +202,7 @@ export default function GeneratePanel({
             className="cursor-pointer rounded-xl bg-gradient-to-r from-[#5B45E0] to-[#8B7BFF] px-4 py-2 text-[13px] font-semibold text-white shadow-[0_10px_24px_-12px_rgba(91,69,224,0.9)] transition hover:brightness-110"
             onClick={onStart}
           >
-            进入课堂
+            {t('generate.enterClass')}
           </button>
         ) : null}
         {ready && partial && onRetryFailed ? (
@@ -204,7 +211,7 @@ export default function GeneratePanel({
             className="cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[13px] font-medium text-[var(--text-dim)] transition hover:text-[var(--text)]"
             onClick={onRetryFailed}
           >
-            重试失败页
+            {t('generate.retryFailed')}
           </button>
         ) : null}
       </footer>

@@ -111,6 +111,24 @@ export interface RetryRequest {
   theme?: ThemeTemplate
 }
 
+/** 前置校验：进入生成页前检查输入违规与是否有讲解主题 */
+export interface PrecheckRequest {
+  message: string
+  sessionId?: string
+  modelId?: string
+}
+
+export interface PrecheckResponse {
+  ok: boolean
+  /** SAFETY_BLOCKED / NO_TOPIC / NO_LECTURE / PRECHECK_ERROR */
+  code: string
+  message: string
+  /** 归一化后的讲解主题；成功时返回 */
+  topic: string
+  /** 成功时下发，后续生成请求携带以跳过图内重复校验 */
+  token: string
+}
+
 export interface ChatPayload {
   message: string
   sessionId?: string
@@ -124,8 +142,22 @@ export interface ChatPayload {
   outlineHint?: string
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
   runId?: string
+  /** 前置校验凭证；携带后图内跳过输入审核与意图分析 */
+  precheckToken?: string
   /** 所选模型「配置id:模型id」；不传表示使用服务端默认模型 */
   modelId?: string
+}
+
+/** 前置校验：先判断输入是否违规、是否有需要讲解的主题（普通 JSON，不走 SSE）。 */
+export function precheckInput(
+  payload: PrecheckRequest,
+  signal?: SseSignal,
+): Promise<PrecheckResponse> {
+  return fetchJson<PrecheckResponse>(`${API_BASE}/chat/precheck`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    signal,
+  })
 }
 
 /**
@@ -235,9 +267,9 @@ export function retryFailedPages(
 }
 
 /** 把框架英文异常转成中文提示，避免把 LangGraph 报错原文直接展示给用户 */
-export function friendlyErrorMessage(message: string): string {
+export function friendlyErrorMessage(message: string, fallback = '生成出错，请重试；若仍失败，请联系管理员。'): string {
   if (/recursion limit of \d+ reached|GRAPH_RECURSION_LIMIT/i.test(message)) {
-    return '生成出错，请重试；若仍失败，请联系管理员。'
+    return fallback
   }
   return message
 }

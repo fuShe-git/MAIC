@@ -14,6 +14,7 @@ from app.agent.nodes import (
     _invoke_text,
     _normalize_catalog,
     _parse_json,
+    _split_oversized_modules,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ CONTINUE_OUTLINE_PROMPT = """你是 MAIC 的课件策划，负责为一份已有
 
 要求：
 1. 续写 2~4 个模块，由浅入深接着已有内容往后讲，不要重复已有模块的内容；
-2. 每个模块含 2~3 个知识点：title 是知识点标题（8 字以内），彼此不重复；
+2. 每个模块含 2~6 个知识点：title 是知识点标题（8 字以内），彼此不重复；超过 3 条的模块会被系统自动拆成多页；
 3. context 是口播讲稿（每条 130~200 字），口语连贯，说清是什么、为什么、怎么做，并用一个小例子或常见误区收尾；第 1 条要用一句话接住已有大纲的最后一个模块；
 4. title 与 context 必须等长且一一对应；
 5. 每个模块补一行 summary，用 25~45 字说明本页讲什么、从什么角度讲；
@@ -35,7 +36,7 @@ REVISE_MODULE_PROMPT = """你是 MAIC 的课件策划，负责重写讲解大纲
 
 要求：
 1. 根据修改意见重写模块内容，保持与其他模块的衔接；没有修改意见就提升内容质量：把要点讲得更透，补上原因、做法和例子；
-2. 模块含 2~3 个知识点：title 是知识点标题（8 字以内），彼此不重复；
+2. 模块含 2~6 个知识点：title 是知识点标题（8 字以内），彼此不重复；超过 3 条会被系统自动拆成多页；
 3. context 是口播讲稿（每条 130~200 字），口语连贯，说清是什么、为什么、怎么做，并用一个小例子或常见误区收尾；只用口语和中文标点；
 4. title 与 context 必须等长且一一对应；
 5. 输出一个模块，并补上 summary（25~45 字说明本页讲什么）。
@@ -137,5 +138,8 @@ async def outline_agent(state: dict) -> dict:
     else:
         catalog = await _build_catalog(topic, docs, hint)
 
+    # 内容多的模块在这里统一拆页，页数由知识点数量决定；前端大纲与后续页面 / 音频
+    # 都拿拆分并重新编号后的 catalogList，保证 ind 全程对齐。
+    catalog = await _split_oversized_modules(catalog)
     _emit("outline", "done", total=len(catalog))
     return {"catalogList": catalog, "stageDone": {"outline": True}}

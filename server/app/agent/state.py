@@ -161,3 +161,6 @@ class SimpleState(TypedDict, total=False):
     outputUnsafe: bool       # safety_output 判定课件文本违规
     dispatch: list[str]      # 主管本轮决策：要派发的子 agent 名（路由转 Send 用）
     snapshot: dict           # 多轮/重试用的历史产物快照
+    inputChecked: bool       # True 表示输入违规校验已由前置预检完成
+    strictTopic: bool        # True 时意图分析不允许用用户输入兜底主题（预检专用）
+    noTopic: bool            # 需要讲解但没有归纳出明确主题（预检专用）

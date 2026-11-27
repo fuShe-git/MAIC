@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
-from app.agent.nodes import OUTPUT_DIR, _emit
+from app.agent.nodes import OUTPUT_DIR, _emit, localized
 from app.agent.sessions import get_snapshot, save_snapshot, update_snapshot
 from app.storage import course_db
 from app.tools.courseAssemble import build_course_html, cleanup_audio_outputs
@@ -54,6 +54,7 @@ _QUIZ_SCRIPT = r"""
 (function () {
   var answers = __ANSWERS__;
   var analyses = __ANALYSES__;
+  var ui = __QUIZ_UI__;
   var total = answers.length;
   var form = document.getElementById('quizForm');
   var prompt = document.getElementById('quizPrompt');
@@ -121,11 +122,11 @@ _QUIZ_SCRIPT = r"""
       if (ok) score++;
       var fb = document.getElementById('fb' + i);
       if (fb) {
-        var letters = correct.map(function (v) { return String.fromCharCode(65 + v); }).join('、');
+        var letters = correct.map(function (v) { return String.fromCharCode(65 + v); }).join(ui.letterJoiner);
         fb.innerHTML = ok
-          ? '<span class="quiz-ok">✓ 回答正确</span>'
-          : '<span class="quiz-no">✗ 回答错误</span>　正确答案：' + letters +
-            (analyses[i] ? '　解析：' + analyses[i] : '');
+          ? '<span class="quiz-ok">' + ui.correct + '</span>'
+          : '<span class="quiz-no">' + ui.wrong + '</span>' + ui.correctAnswer + letters +
+            (analyses[i] ? ui.analysis + analyses[i] : '');
         fb.style.display = 'block';
       }
       var inputs = form.querySelectorAll('input[name="q' + i + '"]');
@@ -134,7 +135,7 @@ _QUIZ_SCRIPT = r"""
     if (submitBtn) submitBtn.style.display = 'none';
     if (result) {
       result.style.display = 'block';
-      result.innerHTML = '得分：<strong>' + score + ' / ' + total + '</strong>';
+      result.innerHTML = ui.score + '<strong>' + score + ' / ' + total + '</strong>';
     }
   });
 
@@ -183,7 +184,10 @@ def _quiz_section(quiz_list: list[dict], standalone: bool = False) -> str:
         analyses.append(analysis)
         multiple = len(ans) > 1
         qtype = "checkbox" if multiple else "radio"
-        tag = '<span class="quiz-tag">多选</span>' if multiple else ""
+        tag = (
+            '<span class="quiz-tag">' + localized("多选", "Multiple answers") + '</span>'
+            if multiple else ""
+        )
         options = "".join(
             '<label class="quiz-opt"><input type="' + qtype + '" name="q' + str(i) +
             '" value="' + str(idx) + '"><span>' + chr(65 + idx) + '. ' +
@@ -199,23 +203,37 @@ def _quiz_section(quiz_list: list[dict], standalone: bool = False) -> str:
 
     answers_json = json.dumps(answers, ensure_ascii=False).replace("</", "<\\/")
     analyses_json = json.dumps(analyses, ensure_ascii=False).replace("</", "<\\/")
+    quiz_ui = {
+        "correct": localized("✓ 回答正确", "✓ Correct"),
+        "wrong": localized("✗ 回答错误", "✗ Incorrect"),
+        "correctAnswer": localized("　正确答案：", " Correct answer: "),
+        "analysis": localized("　解析：", " Explanation: "),
+        "score": localized("得分：", "Score: "),
+        "letterJoiner": localized("、", ", "),
+    }
+    ui_json = json.dumps(quiz_ui, ensure_ascii=False).replace("</", "<\\/")
     script = (
         _QUIZ_SCRIPT.replace("__ANSWERS__", answers_json)
         .replace("__ANALYSES__", analyses_json)
+        .replace("__QUIZ_UI__", ui_json)
         .replace("__STANDALONE__", "true" if standalone else "false")
     )
 
     prompt = "" if standalone else (
-        '<div class="quiz-prompt" id="quizPrompt"><span>讲解已完成，是否进入课后练习？</span>'
-        '<button type="button" id="quizEnter">确认进入</button></div>'
+        '<div class="quiz-prompt" id="quizPrompt"><span>' +
+        localized("讲解已完成，是否进入课后练习？", "Lecture finished. Ready for the practice quiz?") +
+        '</span><button type="button" id="quizEnter">' +
+        localized("确认进入", "Continue") + '</button></div>'
     )
     block_display = "block" if standalone else "none"
     block = (
         '<section class="quiz-block" id="quizBlock" style="display:' + block_display +
         ';max-width:1040px;margin:24px auto;background:#FFF9EA;border-radius:12px;padding:28px 36px;">'
-        '<h2 style="color:#E4620B;font-size:24px;margin-bottom:20px;">课后练习</h2>'
+        '<h2 style="color:#E4620B;font-size:24px;margin-bottom:20px;">' +
+        localized("课后练习", "Practice quiz") + '</h2>'
         '<form id="quizForm" novalidate>' + "".join(items) +
-        '<div class="quiz-submit-wrap"><button type="submit" id="quizSubmit" style="display:none;">提交</button></div>'
+        '<div class="quiz-submit-wrap"><button type="submit" id="quizSubmit" style="display:none;">' +
+        localized("提交", "Submit") + '</button></div>'
         '<div class="quiz-result" id="quizResult"></div></form></section>'
     )
     return _QUIZ_START + prompt + block + _QUIZ_STYLE + script + _QUIZ_END
@@ -240,21 +258,28 @@ def _build_quiz_only_page(topic: str, quiz_list: list[dict], theme: Optional[dic
     """无历史课件时的独立测验页：单模块走既有组装函数（无音频），复用同一套播放器。"""
     from app.agent.nodes import _fallback_page
 
+    quiz_title = localized("课后测验", "Practice quiz")
+    default_topic = quiz_title
     pages = [
         {
             "ind": 1,
-            "context": f"{topic}：课后测验",
+            "context": f"{topic}：{quiz_title}",
             "htmlpage": "",
         }
     ]
     # build_course_html 需要页面 HTML；测验内容以附加片段承载，底页给一句引导
     module = {
         "ind": 1,
-        "title": ["课后测验"],
-        "context": ["下面是本课的练习题，做完再对答案，看看掌握得怎么样。"],
+        "title": [quiz_title],
+        "context": [
+            localized(
+                "下面是本课的练习题，做完再对答案，看看掌握得怎么样。",
+                "Review the practice questions below, then check your answers and see how you did.",
+            )
+        ],
     }
-    pages[0]["htmlpage"] = _fallback_page(topic or "课后测验", module, theme)
-    course_html = build_course_html(topic or "课后测验", pages, [])
+    pages[0]["htmlpage"] = _fallback_page(topic or default_topic, module, theme)
+    course_html = build_course_html(topic or default_topic, pages, [])
     return _append_quiz_section(course_html, _quiz_section(quiz_list, standalone=True))
 
 
@@ -359,7 +384,9 @@ async def assemble_agent(state: dict) -> dict:
     }
 
 
-async def _assemble_quiz_only(topic: str, quiz_list: list[dict], session_id: str) -> dict:
+async def _assemble_quiz_only(
+    topic: str, quiz_list: list[dict], session_id: str, theme: Optional[dict] = None
+) -> dict:
     """quiz_only 产物（R6）：追加历史课件或生成独立测验页。"""
     snapshot = get_snapshot(session_id)
     quiz_html = _quiz_section(quiz_list)
@@ -395,12 +422,12 @@ async def _assemble_quiz_only(topic: str, quiz_list: list[dict], session_id: str
 
     # 2. 无历史课件：生成独立测验页并新建记录
     uid = uuid4().hex
-    course_html = _build_quiz_only_page(topic, quiz_list)
+    course_html = _build_quiz_only_page(topic, quiz_list, theme)
     course_path = video_dir / f"{uid}.html"
     course_path.write_text(course_html, encoding="utf-8")
     await _save_course_record(
         course_id=uid,
-        topic=f"{topic} · 课后测验",
+        topic=f"{topic} · {localized('课后测验', 'Practice quiz')}",
         status="done",
         page_count=1,
         html_path=str(course_path),
