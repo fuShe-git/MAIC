@@ -10,7 +10,6 @@
     extract_page_htmls()  从课件 HTML 中按顺序提取每页完整 HTML
     build_pptx()          把 PNG 字节列表写成 16:9 全幅图片的 .pptx
     export_pptx()         提取 + 渲染 + 生成，返回落盘路径
-    cache_is_fresh()      判断导出缓存是否可用（与封面缓存同款 mtime 策略）
 """
 
 import asyncio
@@ -177,12 +176,3 @@ async def export_pptx(
     logger.info("PPT 导出完成：%s（%d/%d 页）", out_path, len(usable), len(pages))
     return out_path
 
-
-def cache_is_fresh(cache_path: str | Path, source_path: str | Path) -> bool:
-    """缓存是否可用：存在且不比源课件旧（课件被重写后自动失效）。"""
-    cache = Path(cache_path)
-    source = Path(source_path)
-    try:
-        return cache.is_file() and cache.stat().st_mtime >= source.stat().st_mtime
-    except OSError:
-        return False
