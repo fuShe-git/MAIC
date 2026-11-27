@@ -39,9 +39,12 @@ export default function ConfirmDialog({
   const { t } = useI18n()
   // 用 ref 持有回调：避免父组件重渲染导致 effect 重跑、监听器反复解绑
   const cancelRef = useRef(onCancel)
-  cancelRef.current = onCancel
   const busyRef = useRef(busy)
-  busyRef.current = busy
+
+  useEffect(() => {
+    cancelRef.current = onCancel
+    busyRef.current = busy
+  }, [onCancel, busy])
 
   useEffect(() => {
     if (!open) return

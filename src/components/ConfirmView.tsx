@@ -54,9 +54,12 @@ export default function ConfirmView({
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
 
-  useEffect(() => {
+  // 父组件传入新大纲时重置编辑态：渲染期比较代替 effect 内同步 setState
+  const [prevCatalogList, setPrevCatalogList] = useState(catalogList)
+  if (catalogList !== prevCatalogList) {
+    setPrevCatalogList(catalogList)
     setModules(cloneModules(catalogList))
-  }, [catalogList])
+  }
 
   useEffect(() => {
     onDraftChange?.(cleanModules(modules))

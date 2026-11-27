@@ -77,10 +77,16 @@ export default function EmbeddingSettings() {
   const [showKey, setShowKey] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
 
+  // 切换语言会重新拉取配置：渲染期重置加载态，避免 effect 内同步 setState
+  const [prevT, setPrevT] = useState<typeof t>(t)
+  if (t !== prevT) {
+    setPrevT(t)
+    setLoading(true)
+  }
+
   useEffect(() => {
     const controller = new AbortController()
     let alive = true
-    setLoading(true)
     getEmbeddingConfig(controller.signal)
       .then((data) => {
         if (!alive) return

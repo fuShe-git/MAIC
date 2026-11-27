@@ -100,18 +100,17 @@ export default function LecturePlayer({
   const videoRef = useRef<HTMLVideoElement>(null)
   const lastPageRef = useRef('')
   const manualNavRef = useRef(false)
+  /** 课件 iframe 的 body，单独持有以免修改传给播放 hook 的 frameRef */
+  const courseBodyRef = useRef<HTMLElement | null>(null)
   const [canvasScale, setCanvasScale] = useState(1)
 
   // 讲解词面板高度由 DOM 变量驱动：拖动过程中直接修改，避免 React 重渲染覆盖临时高度；
-  // 这里只在折叠状态切换时同步，拖动提交的高度已由面板自己写回 DOM
-  const lowerHeightRef = useRef(lowerHeight)
-  lowerHeightRef.current = lowerHeight
-
+  // 折叠切换与拖动提交后都同步该变量，保持 DOM 与状态一致
   useLayoutEffect(() => {
     const root = rootRef.current
     if (!root) return
-    root.style.setProperty('--lp-lower-h', `${lowerCollapsed ? 0 : lowerHeightRef.current}px`)
-  }, [lowerCollapsed])
+    root.style.setProperty('--lp-lower-h', `${lowerCollapsed ? 0 : lowerHeight}px`)
+  }, [lowerCollapsed, lowerHeight])
 
   /**
    * 课件舞台是 `width: min(94vw, 1100px)` 的 16:9 版式，页内排版（字号、`100vh`
@@ -152,11 +151,12 @@ export default function LecturePlayer({
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(frameWrapRef)
   // 全屏浮层控制条：静止一段时间自动隐藏，鼠标移动/按键/触摸重新出现
   const fsControls = useAutoHideControls(isFullscreen)
+  const { poke: pokeFsControls } = fsControls
   const { resolved: theme } = useTheme()
 
   // 课件 body 是从顶部起排的，全屏放大后舞台会贴顶偏上；这里让它垂直居中
   useEffect(() => {
-    const body = frameRef.current?.contentDocument?.body
+    const body = courseBodyRef.current
     if (!body) return
     body.style.justifyContent = isFullscreen ? 'center' : ''
   }, [isFullscreen, frameReady])
@@ -187,24 +187,23 @@ export default function LecturePlayer({
    */
   useEffect(() => {
     if (!isFullscreen) return
-    const { poke } = fsControls
     const frameDocs = Array.from(frameWrapRef.current?.querySelectorAll('iframe') ?? [])
       .map((frame) => frame.contentDocument)
       .filter((doc): doc is Document => Boolean(doc))
     const targets: Document[] = [document, ...frameDocs]
     targets.forEach((doc) => {
-      doc.addEventListener('mousemove', poke)
-      doc.addEventListener('pointerdown', poke)
+      doc.addEventListener('mousemove', pokeFsControls)
+      doc.addEventListener('pointerdown', pokeFsControls)
     })
-    document.addEventListener('keydown', poke)
+    document.addEventListener('keydown', pokeFsControls)
     return () => {
       targets.forEach((doc) => {
-        doc.removeEventListener('mousemove', poke)
-        doc.removeEventListener('pointerdown', poke)
+        doc.removeEventListener('mousemove', pokeFsControls)
+        doc.removeEventListener('pointerdown', pokeFsControls)
       })
-      document.removeEventListener('keydown', poke)
+      document.removeEventListener('keydown', pokeFsControls)
     }
-  }, [isFullscreen, fsControls.poke, frameReady, source.kind, source.src, pageIndex])
+  }, [isFullscreen, pokeFsControls, frameReady, source.kind, source.src, pageIndex])
 
   const usablePages = useMemo(
     () => pageList.filter((page) => page.htmlpage.trim()),
@@ -216,13 +215,19 @@ export default function LecturePlayer({
     setFailed((prev) => (prev.includes(kind) ? prev : [...prev, kind]))
   }, [])
 
-  // 切换展示源时复位加载态
-  useEffect(() => {
+  // 切换展示源时复位加载态：渲染期比较代替 effect 内同步 setState
+  const sourceKey = `${source.kind}:${source.src}`
+  const [prevSourceKey, setPrevSourceKey] = useState(sourceKey)
+  if (sourceKey !== prevSourceKey) {
+    setPrevSourceKey(sourceKey)
     setFrameReady(false)
     setPageLabel('1 / 1')
     setPlaying(false)
     setPageIndex(0)
     setQuizMode(false)
+  }
+
+  useEffect(() => {
     lastPageRef.current = ''
   }, [source.kind, source.src])
 
@@ -282,6 +287,7 @@ export default function LecturePlayer({
     // 内部原生按钮收编到底部按钮区：隐藏而非删除，保留 DOM 供程序化 click
     const controls = doc.querySelector('.controls') as HTMLElement | null
     if (controls) controls.style.display = 'none'
+    courseBodyRef.current = doc.body
     setFrameReady(true)
     syncFromFrame()
   }, [markFailed, syncFromFrame])

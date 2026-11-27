@@ -103,9 +103,12 @@ export default function SettingsModal({ open, onClose, onLlmConfigsChanged }: Se
   const current = sections.find((item) => item.key === section) ?? sections[0]
 
   // 关闭时重置大模型表单状态，避免下次打开停留在编辑态
-  useEffect(() => {
+  // 渲染期比较代替 effect 内同步 setState
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (prevOpen !== open) {
+    setPrevOpen(open)
     if (!open) setLlmFormOpen(false)
-  }, [open])
+  }
 
   // 打开时锁定背景滚动，并支持 Esc 关闭（表单打开时先关表单）
   useEffect(() => {

@@ -148,9 +148,23 @@ export default function LlmSettings({
       // 隐私模式下忽略
     }
     const controller = new AbortController()
-    void refresh(controller.signal)
+    // 首次拉取直接内联，避免 effect 同步调用含 setState 的 refresh
+    listLlmConfigs(controller.signal)
+      .then((items) => {
+        if (controller.signal.aborted) return
+        setConfigs(items)
+        setLoadError('')
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setConfigs([])
+        setLoadError(t('settings.llm.error.load'))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
     return () => controller.abort()
-  }, [refresh])
+  }, [t])
 
   // 「新增配置」由面板标题栏触发；表单关闭时（含 Esc / 遮罩点击）重置编辑态
   useEffect(() => {

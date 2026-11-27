@@ -124,7 +124,7 @@ function App() {
   // 准备工作台：大纲与 PPT 样式各自独立加载、调试
   const [pendingOutline, setPendingOutline] = useState<OutlineModule[]>([])
   const [outlineDraft, setOutlineDraft] = useState<OutlineModule[]>([])
-  const [threadId, setThreadId] = useState('')
+  const [, setThreadId] = useState('')
   const [outlineStatus, setOutlineStatus] = useState<OutlinePanelStatus>('loading')
   const [outlineError, setOutlineError] = useState('')
   const [themes, setThemes] = useState<ThemeTemplate[]>([])
@@ -198,18 +198,25 @@ function App() {
   }, [refreshLlmConfigs])
 
   // 仅在「拉取成功」且记住的模型确实已被删除时回退，并清掉本地覆盖
-  useEffect(() => {
-    if (!llmConfigsLoaded || !llmConfigsAvailable) return
-    const allModels = modelGroups.flatMap((group) => group.models)
-    if (allModels.length > 0 && !allModels.some((model) => model.id === modelId)) {
-      setModelId(DEFAULT_MODEL_ID)
-      try {
-        localStorage.removeItem(MODEL_STORAGE_KEY)
-      } catch {
-        // 隐私模式下忽略
-      }
+  // 用渲染期比较代替 effect，避免同步 setState 引发级联渲染
+  const availableModels = modelGroups.flatMap((group) => group.models)
+  const modelStale =
+    llmConfigsLoaded &&
+    llmConfigsAvailable &&
+    availableModels.length > 0 &&
+    !availableModels.some((model) => model.id === modelId)
+  const [prevModelStale, setPrevModelStale] = useState(false)
+  if (modelStale && !prevModelStale) {
+    setPrevModelStale(true)
+    setModelId(DEFAULT_MODEL_ID)
+    try {
+      localStorage.removeItem(MODEL_STORAGE_KEY)
+    } catch {
+      // 隐私模式下忽略
     }
-  }, [llmConfigsLoaded, llmConfigsAvailable, modelGroups, modelId])
+  } else if (!modelStale && prevModelStale) {
+    setPrevModelStale(false)
+  }
 
   /** 只有用户主动选择才写入 localStorage；自动回退 / 配置刷新都不改写偏好 */
   function selectModel(id: string) {

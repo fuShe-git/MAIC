@@ -17,12 +17,21 @@ export default function NewFolderModal({ open, onClose, onCreate }: NewFolderMod
   const inputRef = useRef<HTMLInputElement | null>(null)
   // 用 ref 持有 onClose：避免父组件重渲染时 effect 重跑、把已输入的名称清掉
   const closeRef = useRef(onClose)
-  closeRef.current = onClose
 
-  // 每次打开重置输入并聚焦，同时支持 Esc 关闭
+  useEffect(() => {
+    closeRef.current = onClose
+  }, [onClose])
+
+  // 每次打开重置输入：用渲染期比较代替 effect 内同步 setState
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setName('')
+  }
+
+  // 聚焦输入框，同时支持 Esc 关闭
   useEffect(() => {
     if (!open) return
-    setName('')
     const timer = window.setTimeout(() => inputRef.current?.focus(), 0)
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') closeRef.current()

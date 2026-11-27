@@ -15,7 +15,7 @@ export interface ChatTurn {
 /** 把接口返回的任意页面快照规整成播放器可用的 PageItem */
 export function toPageItems(raw: unknown): PageItem[] {
   if (!Array.isArray(raw)) return []
-  return raw.flatMap((row, index) => {
+  return raw.flatMap((row) => {
     if (!row || typeof row !== 'object') return []
     const item = row as Partial<PageItem>
     const ind = Number(item.ind)

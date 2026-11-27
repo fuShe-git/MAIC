@@ -11,7 +11,7 @@ const POKE_THROTTLE_MS = 200
  * - hold()/release() 用于鼠标悬停在浮层上（含倍速菜单）时保持不隐藏。
  */
 export function useAutoHideControls(active: boolean, delay = 2600) {
-  const [visible, setVisible] = useState(false)
+  const [visible, setVisible] = useState(active)
   const timerRef = useRef<number | null>(null)
   /** 悬停等「必须常驻」状态，用 ref 避免把定时器逻辑挂到 state 上 */
   const holdRef = useRef(false)
@@ -52,14 +52,19 @@ export function useAutoHideControls(active: boolean, delay = 2600) {
     schedule()
   }, [schedule])
 
+  // active 变化时用渲染期比较同步 visible，effect 只负责定时器与 ref
+  const [prevActive, setPrevActive] = useState(active)
+  if (active !== prevActive) {
+    setPrevActive(active)
+    setVisible(active)
+  }
+
   useEffect(() => {
     if (!active) {
       clearTimer()
       holdRef.current = false
-      setVisible(false)
       return
     }
-    setVisible(true)
     schedule()
     return clearTimer
   }, [active, schedule, clearTimer])

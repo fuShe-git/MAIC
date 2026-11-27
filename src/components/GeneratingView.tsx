@@ -79,15 +79,18 @@ export default function GeneratingView({
   const { t } = useI18n()
   const [elapsed, setElapsed] = useState(0)
 
-  const stepLabels: Record<string, string> = {
-    pages: t('generate.step.pages'),
-    audio: t('generate.step.audio'),
-    quiz: t('generate.step.quiz'),
-    assemble: t('generate.step.assemble'),
-    confirm: t('generate.step.confirm'),
-    retry: t('generate.step.retry'),
-    done: t('generate.step.done'),
-  }
+  const stepLabels = useMemo<Record<string, string>>(
+    () => ({
+      pages: t('generate.step.pages'),
+      audio: t('generate.step.audio'),
+      quiz: t('generate.step.quiz'),
+      assemble: t('generate.step.assemble'),
+      confirm: t('generate.step.confirm'),
+      retry: t('generate.step.retry'),
+      done: t('generate.step.done'),
+    }),
+    [t],
+  )
   const runningTitles: Record<string, string> = {
     check: t('gen.running.check'),
     safety: t('gen.running.safety'),
